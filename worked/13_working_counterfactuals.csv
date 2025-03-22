@@ -1,0 +1,2 @@
+age,sex,cp,trestbps,chol,fbs,restecg,thalach,exang,oldpeak,slope,target,instance_id,cf_id
+56,1,2,137,186,0,0,145,0,0.0,1,0,13,2
