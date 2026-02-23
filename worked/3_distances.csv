@@ -1,2 +1,0 @@
-instance_id,cf_id,euclidean_distance,manhattan_distance,cp,trestbps,fbs,restecg,thalach,exang,oldpeak,slope
-3,1,19.332873557751316,25.6,2.0,1.0,0.0,0.0,19.0,0.0,2.6,1.0
