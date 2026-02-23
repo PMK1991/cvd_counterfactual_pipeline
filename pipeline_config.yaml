@@ -1,0 +1,28 @@
+# Fresh CF Pipeline Configuration
+# YAML configuration for the counterfactual generation pipeline
+
+pipeline:
+  n_iterations: 100  # Number of times to generate fresh CFs
+  n_patients: 48     # Number of high-risk patients to analyze
+  n_workers: 4       # Number of concurrent workers (adjust based on CPU cores)
+  test_mode: false   # Set to true for quick testing (5 patients, 5 iterations)
+
+dice:
+  model_path: "model/xgb_pipeline.pkl"
+  data_path: "data/heart.csv"
+  method: "genetic"
+  total_cfs: 5
+  permitted_range:
+    trestbps: [100, 120]
+    chol: [150, null]  # null means use 90% of original value
+  timeout: 30  # Timeout in seconds for CF generation
+
+scm:
+  n_samples: 1000  # Number of samples for SCM interventions
+
+output:
+  base_dir: "fresh_cf_iterations"
+  keep_all_iterations: false  # Set true to keep all CF files (uses more disk space)
+
+ci:
+  confidence_level: 0.95  # 95% confidence intervals
