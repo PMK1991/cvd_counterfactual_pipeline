@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Generated pipeline output
+fresh_cf_iterations/
+fresh_cf_iterations_test/
+fresh_cf_pipeline.log
+counterfactuals/*_counterfactual.csv
+original/
+worked/
+
+# Papers, reviewer comments, and rebuttals
+docs/*.docx
+
+# Claude Code
+.claude/
+
+# IDE
+.vscode/
+.idea/

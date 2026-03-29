@@ -65,15 +65,31 @@ class CIComputer:
         lower_percentile = (1 - self.confidence_level) / 2 * 100
         upper_percentile = (1 + self.confidence_level) / 2 * 100
         
-        for col in aggregated_results.columns:
+        for col in aggregated_results.select_dtypes(include='number').columns:
             if col == 'iteration':
                 continue
-            
+
             values = aggregated_results[col].dropna()
-            
+
             if len(values) == 0:
                 continue
-            
+
+            # Mode columns (categorical) — report the overall mode, not CI
+            if col.endswith('_mode_before') or col.endswith('_mode_after'):
+                results.append({
+                    'metric': col,
+                    'mean': values.mode().iloc[0],
+                    'std': 0.0,
+                    'median': values.mode().iloc[0],
+                    'min': values.min(),
+                    'max': values.max(),
+                    'ci_lower': values.mode().iloc[0],
+                    'ci_upper': values.mode().iloc[0],
+                    'ci_width': 0.0,
+                    'n_iterations': len(values)
+                })
+                continue
+
             results.append({
                 'metric': col,
                 'mean': values.mean(),
@@ -92,46 +108,83 @@ class CIComputer:
         
         return ci_df
     
+    def _get_ci_val(self, ci_results: pd.DataFrame, metric: str, field: str = 'mean'):
+        """Helper to extract a value from ci_results for a given metric."""
+        row = ci_results[ci_results['metric'] == metric]
+        if row.empty:
+            return None
+        return row.iloc[0][field]
+
     def generate_summary_report(self, ci_results: pd.DataFrame, output_path: str) -> None:
         """
         Generate markdown summary report
-        
+
         Args:
             ci_results: DataFrame with CI results
             output_path: Path to save report
         """
+        n_iters = ci_results['n_iterations'].iloc[0] if len(ci_results) > 0 else 0
+        total_cfs = self._get_ci_val(ci_results, 'total_successful_cfs')
+        total_cfs_ci_lo = self._get_ci_val(ci_results, 'total_successful_cfs', 'ci_lower')
+        total_cfs_ci_hi = self._get_ci_val(ci_results, 'total_successful_cfs', 'ci_upper')
+
         report_lines = [
             "# Fresh Counterfactual Generation - CI Results",
             "",
-            f"**Iterations:** {ci_results['n_iterations'].iloc[0] if len(ci_results) > 0 else 0}",
+            f"**Iterations:** {n_iters}",
             f"**Confidence Level:** {self.confidence_level * 100}%",
+            f"**Successful CFs per iteration:** {total_cfs:.1f} (95% CI: [{total_cfs_ci_lo:.1f}, {total_cfs_ci_hi:.1f}])" if total_cfs is not None else "",
             "",
-            "## Summary Table",
+            "## Diagnostic Metrics Summary",
             "",
-            "| Metric | Mean | 95% CI | Std Dev |",
-            "|--------|------|--------|---------|"
+            "| Metric | ↓ Improve (%) | ↑ Worsen (%) | ↔ No Change (%) | Mode Before → After | Δ Mean | 95% CI (↓ Improve %) |",
+            "|--------|--------------|-------------|-----------------|---------------------|--------|---------------------|",
         ]
-        
-        # Add key metrics
-        key_metrics = [
-            'total_successful_cfs',
-            'trestbps_improved_pct', 'trestbps_worsened_pct',
-            'cp_improved_pct', 'cp_worsened_pct',
-            'exang_improved_pct', 'exang_worsened_pct',
-            'oldpeak_improved_pct', 'oldpeak_worsened_pct',
-            'thalach_improved_pct', 'thalach_worsened_pct',
-            'slope_improved_pct', 'slope_worsened_pct',
-            'restecg_improved_pct', 'restecg_worsened_pct'
+
+        # Define feature rows: (label, key, unit, is_continuous)
+        features = [
+            ("Resting BP (trestbps)", "trestbps", "mmHg", True),
+            ("Chest Pain (cp)", "cp", None, False),
+            ("Exang (1→0 / 0→1)", "exang", None, False),
+            ("ST Depression (oldpeak)", "oldpeak", "mm", True),
+            ("Max Heart Rate (thalach)", "thalach", "bpm", True),
+            ("ST Slope (slope)", "slope", None, False),
+            ("Resting ECG (restecg)", "restecg", None, False),
         ]
-        
-        for metric in key_metrics:
-            row = ci_results[ci_results['metric'] == metric]
-            if not row.empty:
-                r = row.iloc[0]
-                report_lines.append(
-                    f"| {metric} | {r['mean']:.2f} | [{r['ci_lower']:.2f}, {r['ci_upper']:.2f}] | {r['std']:.2f} |"
-                )
-        
+
+        for label, key, unit, is_continuous in features:
+            imp = self._get_ci_val(ci_results, f'{key}_improved_pct')
+            wor = self._get_ci_val(ci_results, f'{key}_worsened_pct')
+            noc = self._get_ci_val(ci_results, f'{key}_no_change_pct')
+            ci_lo = self._get_ci_val(ci_results, f'{key}_improved_pct', 'ci_lower')
+            ci_hi = self._get_ci_val(ci_results, f'{key}_improved_pct', 'ci_upper')
+
+            imp_s = f"{imp:.1f}" if imp is not None else "—"
+            wor_s = f"{wor:.1f}" if wor is not None else "—"
+            noc_s = f"{noc:.1f}" if noc is not None else "—"
+            ci_s = f"[{ci_lo:.1f}%, {ci_hi:.1f}%]" if ci_lo is not None else "—"
+
+            if is_continuous:
+                mean_diff = self._get_ci_val(ci_results, f'mean_diff_{key}')
+                if mean_diff is not None:
+                    sign = "+" if mean_diff > 0 else ""
+                    delta_s = f"{sign}{mean_diff:.2f} {unit}"
+                else:
+                    delta_s = "—"
+                mode_s = "—"
+            else:
+                mode_before = self._get_ci_val(ci_results, f'{key}_mode_before')
+                mode_after = self._get_ci_val(ci_results, f'{key}_mode_after')
+                if mode_before is not None and mode_after is not None:
+                    mode_s = f"{int(mode_before)} → {int(mode_after)}"
+                else:
+                    mode_s = "—"
+                delta_s = "—"
+
+            report_lines.append(
+                f"| {label} | {imp_s} | {wor_s} | {noc_s} | {mode_s} | {delta_s} | {ci_s} |"
+            )
+
         report_lines.extend([
             "",
             "## Detailed Results",
@@ -141,7 +194,7 @@ class CIComputer:
         ])
         
         # Write report
-        with open(output_path, 'w') as f:
+        with open(output_path, 'w', encoding='utf-8') as f:
             f.write('\n'.join(report_lines))
         
         logger.info(f"Generated summary report: {output_path}")

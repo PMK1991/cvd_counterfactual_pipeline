@@ -62,6 +62,7 @@ class FreshCFPipeline:
         self.scm_analyzer = None
         self.metrics_calculator = None
         self.ci_computer = None
+        self._cached_patient_data = None
         
         logger.info("Initialized FreshCFPipeline")
     
@@ -76,7 +77,7 @@ class FreshCFPipeline:
             },
             'dice': {
                 'model_path': 'model/xgb_pipeline.pkl',
-                'data_path': 'data/heart.csv',
+                'data_path': 'data/heart_statlog_cleveland_hungary_final.csv',
                 'method': 'genetic',
                 'total_cfs': 5,
                 'permitted_range': {
@@ -86,7 +87,9 @@ class FreshCFPipeline:
                 'timeout': 30
             },
             'scm': {
-                'n_samples': 1000
+                'n_samples': 1,
+                'graph_structure': 'full',
+                'intervention_targets': 'both',
             },
             'output': {
                 'base_dir': 'fresh_cf_iterations',
@@ -123,16 +126,29 @@ class FreshCFPipeline:
         logger.info("All modules initialized")
     
     def load_patient_data(self) -> pd.DataFrame:
-        """Load patient data for CF generation"""
-        df = pd.read_csv(self.config['dice']['data_path'])
-        
+        """Load patient data for CF generation (cached after first call).
+
+        Applies the same cleaning as train_model.py (DataLoader) so that
+        patient feature values stay within the range DiCE was trained on.
+        """
+        if self._cached_patient_data is not None:
+            logger.info(f"Using cached patient data: {len(self._cached_patient_data)} patients")
+            return self._cached_patient_data
+
+        from dataLoader import DataLoader
+        loader = DataLoader(self.config['dice']['data_path'])
+        df = loader.load_data()
+        if df is not None:
+            df = loader.remove_outliers_iqr(df)
+
         # Filter high-risk patients (target=1)
         high_risk = df[df['target'] == 1].copy()
-        
+
         n_patients = self.config['pipeline']['n_patients']
         if len(high_risk) > n_patients:
             high_risk = high_risk.head(n_patients)
-        
+
+        self._cached_patient_data = high_risk
         logger.info(f"Loaded {len(high_risk)} high-risk patients")
         return high_risk
     
@@ -167,6 +183,12 @@ class FreshCFPipeline:
             cf_results = []
             for idx, (_, patient_row) in enumerate(patients_df.iterrows()):
                 patient_data = patient_row.to_frame().T
+                # Restore original dtypes (to_frame().T casts int→float due to mixed Series)
+                for col in patient_data.columns:
+                    if col in patients_df.columns:
+                        patient_data[col] = patient_data[col].astype(patients_df[col].dtype)
+                # Drop target column — DiCE expects features only
+                patient_data = patient_data.drop(columns=['target'], errors='ignore')
                 result = dice_gen.generate_and_save_for_patient(
                     patient_data,
                     patient_id=idx,
@@ -189,6 +211,7 @@ class FreshCFPipeline:
             metrics['iteration'] = iteration_num
             
             # Save iteration metrics
+            iteration_dir.mkdir(parents=True, exist_ok=True)
             metrics_file = iteration_dir / "metrics.json"
             with open(metrics_file, 'w') as f:
                 json.dump(metrics, f, indent=2)
@@ -321,7 +344,12 @@ def main():
     parser.add_argument('--n_patients', type=int, default=48, help='Number of patients')
     parser.add_argument('--n_workers', type=int, default=4, help='Number of concurrent workers')
     parser.add_argument('--test_mode', action='store_true', help='Run in test mode (5 patients, 5 iterations)')
-    
+    parser.add_argument('--sensitivity', action='store_true', help='Run sensitivity analysis')
+    parser.add_argument('--sensitivity_iterations', type=int, default=10, help='Iterations per sensitivity variant')
+    parser.add_argument('--sensitivity_patients', type=int, default=10, help='Patients per sensitivity variant')
+    parser.add_argument('--sensitivity_params', nargs='*', default=None,
+                        help='Parameters to vary (default: all). Options: total_cfs, trestbps_range, chol_lower, confidence_level, graph_structure, intervention_targets, n_samples')
+
     args = parser.parse_args()
     
     # Create config
@@ -333,7 +361,7 @@ def main():
         },
         'dice': {
             'model_path': 'model/xgb_pipeline.pkl',
-            'data_path': 'data/heart.csv',
+            'data_path': 'data/heart_statlog_cleveland_hungary_final.csv',
             'method': 'genetic',
             'total_cfs': 5,
             'permitted_range': {
@@ -343,7 +371,9 @@ def main():
             'timeout': 30
         },
         'scm': {
-            'n_samples': 1000
+            'n_samples': 1,
+            'graph_structure': 'full',
+            'intervention_targets': 'both',
         },
         'output': {
             'base_dir': 'fresh_cf_iterations_test' if args.test_mode else 'fresh_cf_iterations',
@@ -354,9 +384,18 @@ def main():
         }
     }
     
-    # Run pipeline
-    pipeline = FreshCFPipeline(config=config)
-    pipeline.run_full_pipeline()
+    if args.sensitivity:
+        from sensitivity_analyzer import SensitivityAnalyzer
+        analyzer = SensitivityAnalyzer(
+            baseline_config=config,
+            n_iterations=args.sensitivity_iterations,
+            n_patients=args.sensitivity_patients,
+            n_workers=config['pipeline']['n_workers'],
+        )
+        analyzer.run_sensitivity_analysis(parameters=args.sensitivity_params)
+    else:
+        pipeline = FreshCFPipeline(config=config)
+        pipeline.run_full_pipeline()
 
 
 if __name__ == "__main__":

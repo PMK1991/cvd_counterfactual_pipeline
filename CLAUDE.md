@@ -25,6 +25,25 @@ python fresh_cf_pipeline.py --n_iterations 100 --n_patients 48 --n_workers 4
 python fresh_cf_pipeline.py --n_iterations 50 --n_patients 30 --n_workers 8
 ```
 
+### Sensitivity Analysis
+
+**Full sensitivity analysis** (all parameters, 10 iter × 10 patients per variant):
+```bash
+python fresh_cf_pipeline.py --sensitivity
+```
+
+**Single parameter** (quick test):
+```bash
+python fresh_cf_pipeline.py --sensitivity --sensitivity_iterations 3 --sensitivity_patients 5 --sensitivity_params total_cfs
+```
+
+**Multiple parameters**:
+```bash
+python fresh_cf_pipeline.py --sensitivity --sensitivity_params total_cfs trestbps_range chol_lower
+```
+
+Available parameters: `total_cfs`, `trestbps_range`, `chol_lower`, `confidence_level`
+
 ### Environment Setup
 
 The project uses conda environment defined in `mtech-env.yml`:
@@ -51,7 +70,7 @@ Edit `pipeline_config.yaml` to adjust:
 
 ## Architecture
 
-### Modular 5-Component Pipeline
+### Modular 6-Component Pipeline
 
 The pipeline follows a **modular, concurrent architecture** with these independent modules:
 
@@ -66,10 +85,11 @@ The pipeline follows a **modular, concurrent architecture** with these independe
    - Generates counterfactuals for high-risk patients (target=1)
    - Permits intervention on `trestbps` and `chol` within specified ranges
 
-3. **`scm_analyzer.py`** - SCM validation wrapper
-   - Validates DiCE-generated counterfactuals using causal models
-   - Wraps `counterfactualAnalyzer.py` (legacy DoWhy implementation)
-   - Applies interventions on `chol` and `trestbps`
+3. **`scm_analyzer.py`** - SCM validation using DoWhy
+   - Uses `InvertibleStructuralCausalModel` with 3-layer DAG (Risk Factors → Disease → Symptoms)
+   - Causal graph from `nb_cvd_scm.ipynb`: age/sex/chol/fbs/trestbps → target → cp/restecg/thalach/exang/slope/oldpeak
+   - Applies interventions on `chol` and `trestbps` via `gcm.interventional_samples()`
+   - Categorical columns cast to `category` dtype before fitting
    - Only accepts counterfactuals that flip target from 1→0
 
 4. **`metrics_calculator.py`** - Diagnostic metrics
@@ -80,6 +100,12 @@ The pipeline follows a **modular, concurrent architecture** with these independe
    - Aggregates results across iterations
    - Computes percentile-based 95% confidence intervals
    - Generates summary reports in markdown format
+
+6. **`sensitivity_analyzer.py`** - Sensitivity analysis
+   - One-at-a-time (OAT) parameter sweeps varying `total_cfs`, `trestbps_range`, `chol_lower`, `confidence_level`
+   - Reuses `FreshCFPipeline` with modified configs for each variant
+   - Confidence level is handled post-hoc (recomputes CIs from baseline data, no pipeline rerun)
+   - Generates comparison CSVs and markdown sensitivity report
 
 ### Key Data Flow
 
@@ -111,6 +137,11 @@ Output: aggregated_results/{all_iteration_metrics.csv, ci_results.csv, summary_r
   - `nb_cvd_eda.ipynb` - Exploratory data analysis
   - `nb_confidence_intervals.ipynb` - CI analysis
   - `nb_heart_disease_scm.ipynb` - SCM experimentation
+
+- **Utility Classes** (used by notebooks, not by the main pipeline):
+  - `dataLoader.py` - Data loading with outlier detection (IsolationForest)
+  - `hyperParameterTuning.py` - GridSearchCV wrapper for model tuning
+  - `plotter.py` - Matplotlib visualization helpers (box plots, etc.)
 
 - **Standalone Analysis Scripts**:
   - `confidence_interval_analysis.py` - Standalone CI computation
@@ -147,7 +178,14 @@ fresh_cf_iterations/              # or fresh_cf_iterations_test/ in test mode
 │   ├── all_iteration_metrics.csv # All iteration results
 │   ├── ci_results.csv            # Confidence intervals for all metrics
 │   └── summary_report.md         # Human-readable summary
-└── fresh_cf_pipeline.log         # Detailed execution logs
+├── fresh_cf_pipeline.log         # Detailed execution logs
+└── sensitivity_results/          # Sensitivity analysis output
+    ├── total_cfs/comparison.csv
+    ├── trestbps_range/comparison.csv
+    ├── chol_lower/comparison.csv
+    ├── confidence_level/comparison.csv
+    ├── all_sensitivity_results.csv
+    └── sensitivity_report.md
 ```
 
 ## Important Notes
@@ -165,9 +203,11 @@ fresh_cf_iterations/              # or fresh_cf_iterations_test/ in test mode
   - `chol`: [150, 90% of original] (cholesterol reduction)
 
 ### SCM Validation
+- Uses `InvertibleStructuralCausalModel` with 3-layer DAG: Risk Factors → target → Symptoms
 - Only counterfactuals that flip target from 1→0 are considered "successful"
-- Uses DoWhy's interventional sampling with n_samples=1000
-- Applies physiological constraints to ensure realistic outputs
+- Uses DoWhy's `gcm.interventional_samples()` with deterministic seed per patient-CF pair
+- Applies physiological constraints to ensure realistic outputs (oldpeak ≥ 0, cp ∈ [1,4], etc.)
+- Categorical columns (`target`, `exang`, `fbs`, `cp`, `restecg`, `slope`) cast to `category` dtype
 
 ### Performance Considerations
 - Test mode completes in ~5-10 minutes
@@ -189,9 +229,11 @@ Edit `dice_cf_generator.py`:
 - Modify `features_to_vary` to include/exclude features
 
 ### Changing Causal Model
-Edit `scm_analyzer.py` and `counterfactualAnalyzer.py`:
-- Modify the causal graph structure in `counterfactualAnalyzer.__init__()`
-- Update intervention logic in `apply_scm_intervention()`
+Edit `scm_analyzer.py`:
+- Modify the 3-layer causal graph edges in `_build_causal_model()`
+- Reference `notebooks/nb_cvd_scm.ipynb` for the original graph definition
+- The model uses `gcm.InvertibleStructuralCausalModel` with categorical dtypes
+- Update intervention logic in `apply_scm_intervention()` if changing intervention targets
 
 ### Debugging
 - Check `fresh_cf_pipeline.log` for detailed execution logs

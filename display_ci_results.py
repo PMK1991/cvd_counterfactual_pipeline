@@ -4,7 +4,7 @@ Quick script to print the confidence interval results in a formatted way
 import pandas as pd
 
 # Load results
-ci_results = pd.read_csv('diagnostic_metrics_ci.csv')
+ci_results = pd.read_csv('reports/diagnostic_metrics_ci.csv')
 
 print("\n" + "="*80)
 print("CONFIDENCE INTERVALS FOR DOWNSTREAM DIAGNOSTIC METRICS")
@@ -41,6 +41,6 @@ for metric_key, metric_name in metrics_display.items():
         print(f"  CI Width: {row['ci_width']:.2f}")
 
 print("\n" + "="*80)
-print("\nFull results saved to: diagnostic_metrics_ci.csv")
-print("Detailed report saved to: diagnostic_metrics_ci_report.md")
+print("\nFull results saved to: reports/diagnostic_metrics_ci.csv")
+print("Detailed report saved to: reports/diagnostic_metrics_ci_report.md")
 print("="*80 + "\n")

@@ -412,7 +412,7 @@ class DiagnosticMetricsCI:
         
         print("\n" + "="*80)
     
-    def save_results(self, ci_results, output_file='diagnostic_metrics_ci.csv'):
+    def save_results(self, ci_results, output_file='reports/diagnostic_metrics_ci.csv'):
         """
         Save confidence interval results to CSV
         

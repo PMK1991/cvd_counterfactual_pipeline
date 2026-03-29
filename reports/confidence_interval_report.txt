@@ -1,0 +1,79 @@
+================================================================================
+CONFIDENCE INTERVAL ANALYSIS REPORT
+CVD Counterfactual Analysis
+================================================================================
+
+Number of bootstrap runs: 100
+Confidence level: 95.0%
+Number of instances: 48
+
+================================================================================
+KEY METRICS
+================================================================================
+
+success_rate:
+  Mean: 0.1188
+  Std:  0.0126
+  95% CI: [0.0962, 0.1381]
+  CI Width: 0.0418
+
+euclidean_mean_working:
+  Mean: 1.7078
+  Std:  0.0798
+  95% CI: [1.5483, 1.8667]
+  CI Width: 0.3185
+
+manhattan_mean_working:
+  Mean: 1.7078
+  Std:  0.0798
+  95% CI: [1.5483, 1.8667]
+  CI Width: 0.3185
+
+euclidean_median_working:
+  Mean: 2.0000
+  Std:  0.0000
+  95% CI: [2.0000, 2.0000]
+  CI Width: 0.0000
+
+manhattan_median_working:
+  Mean: 2.0000
+  Std:  0.0000
+  95% CI: [2.0000, 2.0000]
+  CI Width: 0.0000
+
+================================================================================
+FEATURE CHANGES (Working Counterfactuals)
+================================================================================
+
+cp:
+  Mean change: -1.3992
+  95% CI: [-1.6254, -1.1852]
+
+trestbps:
+  Mean change: 0.0000
+  95% CI: [0.0000, 0.0000]
+
+fbs:
+  Mean change: 0.0000
+  95% CI: [0.0000, 0.0000]
+
+restecg:
+  Mean change: 0.0000
+  95% CI: [0.0000, 0.0000]
+
+thalach:
+  Mean change: 0.0000
+  95% CI: [0.0000, 0.0000]
+
+exang:
+  Mean change: 0.0000
+  95% CI: [0.0000, 0.0000]
+
+oldpeak:
+  Mean change: 0.0000
+  95% CI: [0.0000, 0.0000]
+
+slope:
+  Mean change: 0.0000
+  95% CI: [0.0000, 0.0000]
+

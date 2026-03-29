@@ -9,6 +9,7 @@ Author: PMK
 Date: 2026-01-26
 """
 
+import copy
 import pandas as pd
 import numpy as np
 import dice_ml
@@ -75,8 +76,12 @@ class DiceCFGenerator:
                 self.model = pickle.load(f)
             logger.info(f"Loaded model from {self.model_path}")
             
-            # Load data
-            df = pd.read_csv(self.data_path)
+            # Load and clean data (same preprocessing as model training)
+            from dataLoader import DataLoader
+            loader = DataLoader(self.data_path)
+            df = loader.load_data()
+            if df is not None:
+                df = loader.remove_outliers_iqr(df)
             logger.info(f"Loaded data from {self.data_path}: {len(df)} rows")
             
             # Prepare DiCE data object
@@ -134,7 +139,9 @@ class DiceCFGenerator:
         timeout = timeout or self.config['timeout']
         
         # Prepare permitted range (handle dynamic chol limit)
-        permitted_range = self.config['permitted_range'].copy()
+        # Deep copy required: shallow copy shares inner lists, causing mutation
+        # of the original config after the first patient's chol limit is set
+        permitted_range = copy.deepcopy(self.config['permitted_range'])
         if permitted_range['chol'][1] is None:
             original_chol = patient_data['chol'].values[0]
             permitted_range['chol'][1] = original_chol - 0.1 * original_chol
@@ -144,13 +151,15 @@ class DiceCFGenerator:
         
         def target():
             try:
-                cf_result = self.dice_exp.generate_counterfactuals(
-                    patient_data,
+                kwargs = dict(
+                    query_instances=patient_data,
                     total_CFs=self.config['total_cfs'],
                     desired_class='opposite',
                     permitted_range=permitted_range,
-                    features_to_vary=self.config['features_to_vary']
                 )
+                if self.config.get('features_to_vary') is not None:
+                    kwargs['features_to_vary'] = self.config['features_to_vary']
+                cf_result = self.dice_exp.generate_counterfactuals(**kwargs)
                 result_queue.put(cf_result)
             except Exception as e:
                 logger.warning(f"DiCE generation failed: {e}")
@@ -193,14 +202,18 @@ class DiceCFGenerator:
         orig_dir.mkdir(parents=True, exist_ok=True)
         cf_dir.mkdir(parents=True, exist_ok=True)
         
+        # Access CFs via cf_examples_list (DiCE API)
+        cf_example = cf_result.cf_examples_list[0]
+
         # Save original patient data
         orig_path = orig_dir / f"patient_{patient_id}.csv"
-        cf_result.test_instance_df.to_csv(orig_path, index=False)
-        
+        cf_example.test_instance_df.to_csv(orig_path, index=False)
+
         # Save counterfactuals
         cf_paths = []
-        if cf_result.final_cfs_df is not None and len(cf_result.final_cfs_df) > 0:
-            for i, cf_row in cf_result.final_cfs_df.iterrows():
+        final_cfs = cf_example.final_cfs_df
+        if final_cfs is not None and len(final_cfs) > 0:
+            for i, cf_row in final_cfs.iterrows():
                 cf_path = cf_dir / f"patient_{patient_id}_cf_{i}.csv"
                 cf_row.to_frame().T.to_csv(cf_path, index=False)
                 cf_paths.append(str(cf_path))
@@ -241,7 +254,9 @@ class DiceCFGenerator:
             # Generate CFs
             cf_result = self.generate_counterfactuals(patient_data)
             
-            if cf_result is not None and cf_result.final_cfs_df is not None:
+            if (cf_result is not None
+                    and cf_result.cf_examples_list
+                    and cf_result.cf_examples_list[0].final_cfs_df is not None):
                 # Save CFs
                 orig_path, cf_paths = self.save_counterfactuals(
                     cf_result, iteration_num, patient_id, output_dir

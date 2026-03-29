@@ -91,7 +91,9 @@ class MetricsCalculator:
             'cp_improved_pct': (df['cf_cp'] < df['orig_cp']).sum() / n_total * 100,
             'cp_worsened_pct': (df['cf_cp'] > df['orig_cp']).sum() / n_total * 100,
             'cp_no_change_pct': (df['cf_cp'] == df['orig_cp']).sum() / n_total * 100,
-            'cp_changed_pct': (df['orig_cp'] != df['cf_cp']).sum() / n_total * 100
+            'cp_changed_pct': (df['orig_cp'] != df['cf_cp']).sum() / n_total * 100,
+            'cp_mode_before': int(df['orig_cp'].mode().iloc[0]),
+            'cp_mode_after': int(df['cf_cp'].mode().iloc[0]),
         }
     
     def compute_exang_metrics(self, df: pd.DataFrame, n_total: int) -> Dict:
@@ -99,7 +101,9 @@ class MetricsCalculator:
         return {
             'exang_improved_pct': ((df['orig_exang'] == 1) & (df['cf_exang'] == 0)).sum() / n_total * 100,
             'exang_worsened_pct': ((df['orig_exang'] == 0) & (df['cf_exang'] == 1)).sum() / n_total * 100,
-            'exang_no_change_pct': (df['orig_exang'] == df['cf_exang']).sum() / n_total * 100
+            'exang_no_change_pct': (df['orig_exang'] == df['cf_exang']).sum() / n_total * 100,
+            'exang_mode_before': int(df['orig_exang'].mode().iloc[0]),
+            'exang_mode_after': int(df['cf_exang'].mode().iloc[0]),
         }
     
     def compute_oldpeak_metrics(self, df: pd.DataFrame, n_total: int) -> Dict:
@@ -125,7 +129,9 @@ class MetricsCalculator:
         return {
             'slope_improved_pct': (df['cf_slope'] < df['orig_slope']).sum() / n_total * 100,
             'slope_worsened_pct': (df['cf_slope'] > df['orig_slope']).sum() / n_total * 100,
-            'slope_no_change_pct': (df['cf_slope'] == df['orig_slope']).sum() / n_total * 100
+            'slope_no_change_pct': (df['cf_slope'] == df['orig_slope']).sum() / n_total * 100,
+            'slope_mode_before': int(df['orig_slope'].mode().iloc[0]),
+            'slope_mode_after': int(df['cf_slope'].mode().iloc[0]),
         }
     
     def compute_restecg_metrics(self, df: pd.DataFrame, n_total: int) -> Dict:
@@ -133,7 +139,9 @@ class MetricsCalculator:
         return {
             'restecg_improved_pct': (df['cf_restecg'] < df['orig_restecg']).sum() / n_total * 100,
             'restecg_worsened_pct': (df['cf_restecg'] > df['orig_restecg']).sum() / n_total * 100,
-            'restecg_no_change_pct': (df['orig_restecg'] == df['cf_restecg']).sum() / n_total * 100
+            'restecg_no_change_pct': (df['orig_restecg'] == df['cf_restecg']).sum() / n_total * 100,
+            'restecg_mode_before': int(df['orig_restecg'].mode().iloc[0]),
+            'restecg_mode_after': int(df['cf_restecg'].mode().iloc[0]),
         }
 
 

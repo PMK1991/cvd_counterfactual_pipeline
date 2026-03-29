@@ -7,6 +7,7 @@ Runs the counterfactual analysis 100 times and computes confidence intervals
 import pandas as pd
 import numpy as np
 from scipy import stats
+import tempfile
 import warnings
 from tqdm import tqdm
 import time
@@ -54,22 +55,23 @@ class ConfidenceIntervalAnalyzer:
         set_random_seed(seed)
         np.random.seed(seed)
         
-        # Create analyzer for this run
-        analyzer = CounterfactualAnalyzer(
-            self.causal_model,
-            original_dir="original",
-            cf_dir="counterfactuals",
-            output_dir=f"temp_run_{run_id}"
-        )
-        
-        # Process all instances (suppress output)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            analyzer.process_all_instances(instance_range=range(48), show_progress=False)
-        
-        # Extract metrics
-        metrics = self._extract_metrics(analyzer)
-        
+        # Create analyzer in a temporary directory that auto-cleans on exit
+        with tempfile.TemporaryDirectory(prefix=f"temp_run_{run_id}_") as output_dir:
+            analyzer = CounterfactualAnalyzer(
+                self.causal_model,
+                original_dir="original",
+                cf_dir="counterfactuals",
+                output_dir=output_dir
+            )
+
+            # Process all instances (suppress output)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                analyzer.process_all_instances(instance_range=range(48), show_progress=False)
+
+            # Extract metrics before temp directory is cleaned up
+            metrics = self._extract_metrics(analyzer)
+
         return metrics
     
     def _extract_metrics(self, analyzer):
@@ -210,7 +212,7 @@ class ConfidenceIntervalAnalyzer:
         results_df = pd.DataFrame(results)
         return results_df
     
-    def save_results(self, output_file='confidence_intervals.csv'):
+    def save_results(self, output_file='reports/confidence_intervals.csv'):
         """
         Save confidence interval results to CSV
         
@@ -303,7 +305,7 @@ def main():
     ci_analyzer.run_bootstrap_analysis()
     
     # Save and display results
-    ci_results = ci_analyzer.save_results('confidence_intervals.csv')
+    ci_results = ci_analyzer.save_results('reports/confidence_intervals.csv')
     ci_analyzer.print_summary()
     """)
 
