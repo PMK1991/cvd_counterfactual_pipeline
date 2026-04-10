@@ -241,40 +241,15 @@ ci:
 
 The SCM uses DoWhy's `InvertibleStructuralCausalModel` with a 3-layer directed acyclic graph (from `nb_cvd_scm.ipynb`):
 
-```
-Layer 1: Risk Factors (root nodes)
-    age, sex, chol, fbs, trestbps
+![DAG for Statlog Heart Disease Dataset](plots/scm_dag.png)
 
-Layer 2: Disease
-    target
+The graph encodes three layers:
 
-Layer 3: Symptoms
-    cp, restecg, thalach, exang, slope, oldpeak
+- **Layer 1 — Risk Factors** (root nodes): `age`, `sex`, `chol`, `fbs`, `trestbps`
+- **Layer 2 — Disease**: `target`
+- **Layer 3 — Symptoms**: `cp`, `restecg`, `thalach`, `exang`, `slope`, `oldpeak`
 
-
-Edges:
-    Risk Factors → Disease:
-        age ──> target
-        sex ──> target
-        chol ──> target
-        fbs ──> target
-        trestbps ──> target
-
-    Disease → Symptoms:
-        target ──> cp
-        target ──> restecg
-        target ──> thalach
-        target ──> exang
-        target ──> slope
-        target ──> oldpeak
-
-    Direct Risk Factor → Symptom relationships:
-        age ──> chol, age ──> trestbps
-        sex ──> trestbps, sex ──> chol
-        chol ──> trestbps
-        thalach ──> exang
-        exang ──> cp
-```
+With edges: risk factors → target → symptoms, plus direct risk-factor linkages (`age → chol`, `age → trestbps`, `sex → trestbps`, `sex → chol`, `chol → trestbps`) and symptom cross-links (`thalach → exang`, `exang → cp`).
 
 **Intervention mechanism:** `do(chol=X, trestbps=Y)` propagates causally through the 3-layer graph via DoWhy's `gcm.interventional_samples()`. Risk factor interventions affect `target`, which in turn propagates to symptom nodes. A fixed random seed derived from patient features ensures deterministic results per patient-CF pair.
 
