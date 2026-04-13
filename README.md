@@ -76,6 +76,26 @@ This pipeline addresses a key challenge: counterfactual generators like DiCE pro
 ```
 cvd_counterfactual_pipeline/
 │
+├── src/                                # Source code
+│   ├── pipeline/                       # Core pipeline modules
+│   │   ├── fresh_cf_pipeline.py        #   Main pipeline orchestrator
+│   │   ├── dice_cf_generator.py        #   DiCE counterfactual generation
+│   │   ├── scm_analyzer.py            #   SCM validation (DoWhy)
+│   │   ├── metrics_calculator.py       #   Diagnostic metrics computation
+│   │   ├── ci_computer.py             #   Confidence interval computation
+│   │   └── sensitivity_analyzer.py     #   Sensitivity analysis
+│   ├── training/                       # Model training
+│   │   └── train_model.py             #   XGBoost model training
+│   ├── utils/                          # Utility classes
+│   │   ├── dataLoader.py              #   Data loading + IQR outlier removal
+│   │   ├── plotter.py                 #   Visualization utilities
+│   │   └── hyperParameterTuning.py    #   GridSearchCV wrapper
+│   └── legacy/                         # Standalone analysis scripts
+│       ├── counterfactualAnalyzer.py   #   Legacy SCM analyzer
+│       ├── confidence_interval_analysis.py
+│       ├── diagnostic_metrics_ci.py
+│       └── display_ci_results.py
+│
 ├── data/                              # Dataset
 │   ├── heart_statlog_cleveland_hungary_final.csv
 │   └── heart_statlog_cleveland_hungary_final.xlsx
@@ -83,41 +103,29 @@ cvd_counterfactual_pipeline/
 ├── model/                             # Trained model
 │   └── xgb_pipeline.pkl              # XGBoost + StandardScaler + OneHotEncoder
 │
-├── fresh_cf_iterations/               # Pipeline output
+├── notebooks/                         # Jupyter notebooks (not tracked in git)
+│   ├── eda/                           #   Exploratory data analysis
+│   ├── counterfactual/                #   CF generation experiments
+│   ├── causal/                        #   SCM/causal model experiments
+│   └── analysis/                      #   CI/results analysis
+│
+├── fresh_cf_iterations/               # Pipeline output (gitignored)
 │   ├── iteration_000/ ... iteration_099/
 │   │   ├── original/                  # Original patient data
 │   │   ├── counterfactuals/           # DiCE-generated CFs
 │   │   ├── successful/               # SCM-validated CFs
 │   │   └── metrics.json              # Per-iteration metrics
-│   └── aggregated_results/
-│       ├── all_iteration_metrics.csv
-│       ├── ci_results.csv
-│       └── summary_report.md
+│   ├── aggregated_results/
+│   │   ├── all_iteration_metrics.csv
+│   │   ├── ci_results.csv
+│   │   └── summary_report.md
+│   └── sensitivity_results/           # Sensitivity analysis output
 │
-├── notebooks/                         # Jupyter notebooks (EDA, experiments)
 ├── docs/                              # Paper drafts, reviewer comments
 ├── reports/                           # Standalone analysis reports
 ├── plots/                             # Visualizations
-├── counterfactuals/                   # Legacy CF outputs + Results.xlsx
-├── original/                          # Legacy original patient CSVs
-├── worked/                            # Legacy working CF CSVs
 │
-├── fresh_cf_pipeline.py               # Main pipeline orchestrator
-├── dice_cf_generator.py               # DiCE counterfactual generation
-├── scm_analyzer.py                    # SCM validation (DoWhy)
-├── metrics_calculator.py              # Diagnostic metrics computation
-├── ci_computer.py                     # Confidence interval computation
-├── train_model.py                     # XGBoost model training
 ├── pipeline_config.yaml               # Pipeline configuration
-│
-├── counterfactualAnalyzer.py          # Legacy SCM analyzer
-├── dataLoader.py                      # Data loading + IQR outlier removal
-├── plotter.py                         # Visualization utilities
-├── hyperParameterTuning.py            # GridSearchCV wrapper
-├── confidence_interval_analysis.py    # Standalone CI analysis
-├── diagnostic_metrics_ci.py           # Standalone metrics + CI
-├── display_ci_results.py              # Results display script
-│
 ├── mtech-env.yml                      # Conda environment (full)
 ├── requirements.txt                   # Pip requirements (minimal)
 └── README.md
@@ -154,7 +162,7 @@ pip install -r requirements.txt
 ### 2. Train the Model
 
 ```bash
-python train_model.py
+python src/training/train_model.py
 ```
 
 Trains an XGBoost classifier (`max_depth=3, learning_rate=0.01, n_estimators=300`) on the CVD dataset with IQR outlier removal, StandardScaler for continuous features, and OneHotEncoder for categorical features. Saves to `model/xgb_pipeline.pkl`.
@@ -165,17 +173,23 @@ Expected output: Accuracy ~0.92, F1 ~0.92.
 
 **Quick test** (5 patients, 5 iterations, ~6 min):
 ```bash
-python fresh_cf_pipeline.py --test_mode
+python src/pipeline/fresh_cf_pipeline.py --test_mode
 ```
 
 **Full run** (48 patients, 100 iterations, ~2-4 hours):
 ```bash
-python fresh_cf_pipeline.py --n_iterations 100 --n_patients 48 --n_workers 4
+python src/pipeline/fresh_cf_pipeline.py --n_iterations 100 --n_patients 48 --n_workers 4
 ```
 
 Adjust `--n_workers` based on CPU cores (increase for faster execution, decrease if memory-constrained).
 
-### 4. View Results
+### 4. Sensitivity Analysis
+
+```bash
+python src/pipeline/fresh_cf_pipeline.py --sensitivity
+```
+
+### 5. View Results
 
 Results are saved to `fresh_cf_iterations/aggregated_results/`:
 - `summary_report.md` — human-readable table with CIs
@@ -239,7 +253,7 @@ ci:
 
 ## Causal Graph
 
-The SCM uses DoWhy's `InvertibleStructuralCausalModel` with a 3-layer directed acyclic graph (from `nb_cvd_scm.ipynb`):
+The SCM uses DoWhy's `InvertibleStructuralCausalModel` with a 3-layer directed acyclic graph (from `notebooks/causal/nb_cvd_scm.ipynb`):
 
 ![DAG for Statlog Heart Disease Dataset](plots/scm_dag.png)
 

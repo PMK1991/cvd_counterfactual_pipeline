@@ -9,14 +9,20 @@ Author: PMK
 Date: 2026-03-28
 """
 
+import sys
+from pathlib import Path
+
+_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 import copy
 import pandas as pd
-from pathlib import Path
 from typing import List, Dict, Optional
 import logging
 import time
 
-from ci_computer import CIComputer
+from src.pipeline.ci_computer import CIComputer
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -194,7 +200,7 @@ class SensitivityAnalyzer:
     def _run_parameter_sweep(self, param_name: str, param_spec: Dict) -> pd.DataFrame:
         """Run pipeline for each value of a single parameter."""
         # Import here to avoid circular imports
-        from fresh_cf_pipeline import FreshCFPipeline
+        from src.pipeline.fresh_cf_pipeline import FreshCFPipeline
 
         rows = []
         for value in param_spec['values']:

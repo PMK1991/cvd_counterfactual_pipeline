@@ -9,8 +9,13 @@ Usage:
     python train_model.py
 """
 
+import sys
 import pickle
 from pathlib import Path
+
+_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 import pandas as pd
 from sklearn.compose import ColumnTransformer
@@ -20,7 +25,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from xgboost import XGBClassifier
 
-from dataLoader import DataLoader
+from src.utils.dataLoader import DataLoader
 
 DATA_PATH = "data/heart_statlog_cleveland_hungary_final.csv"
 MODEL_OUTPUT = Path("model/xgb_pipeline.pkl")

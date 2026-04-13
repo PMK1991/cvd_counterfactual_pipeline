@@ -14,8 +14,14 @@ import time
 from dowhy import gcm
 from dowhy.gcm.util.general import set_random_seed
 
+import sys
+from pathlib import Path
+_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 # Import your existing analyzer
-from counterfactualAnalyzer import CounterfactualAnalyzer
+from src.legacy.counterfactualAnalyzer import CounterfactualAnalyzer
 
 
 class ConfidenceIntervalAnalyzer:

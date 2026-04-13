@@ -9,9 +9,17 @@ Author: PMK
 Date: 2026-01-26
 """
 
+import sys
+from pathlib import Path
+
+# Ensure project root is on sys.path so package imports work
+# regardless of how the script is invoked.
+_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 import pandas as pd
 import numpy as np
-from pathlib import Path
 from typing import List, Dict, Optional
 import logging
 import json
@@ -22,10 +30,10 @@ from tqdm import tqdm
 import argparse
 
 # Import pipeline modules
-from dice_cf_generator import DiceCFGenerator
-from scm_analyzer import SCMAnalyzer
-from metrics_calculator import MetricsCalculator
-from ci_computer import CIComputer
+from src.pipeline.dice_cf_generator import DiceCFGenerator
+from src.pipeline.scm_analyzer import SCMAnalyzer
+from src.pipeline.metrics_calculator import MetricsCalculator
+from src.pipeline.ci_computer import CIComputer
 
 # Configure logging
 logging.basicConfig(
@@ -135,7 +143,7 @@ class FreshCFPipeline:
             logger.info(f"Using cached patient data: {len(self._cached_patient_data)} patients")
             return self._cached_patient_data
 
-        from dataLoader import DataLoader
+        from src.utils.dataLoader import DataLoader
         loader = DataLoader(self.config['dice']['data_path'])
         df = loader.load_data()
         if df is not None:
@@ -385,7 +393,7 @@ def main():
     }
     
     if args.sensitivity:
-        from sensitivity_analyzer import SensitivityAnalyzer
+        from src.pipeline.sensitivity_analyzer import SensitivityAnalyzer
         analyzer = SensitivityAnalyzer(
             baseline_config=config,
             n_iterations=args.sensitivity_iterations,

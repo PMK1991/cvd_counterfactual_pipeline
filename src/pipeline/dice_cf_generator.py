@@ -9,6 +9,13 @@ Author: PMK
 Date: 2026-01-26
 """
 
+import sys
+from pathlib import Path
+
+_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 import copy
 import pandas as pd
 import numpy as np
@@ -18,7 +25,6 @@ import threading
 import queue
 import os
 import pickle
-from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 import logging
 
@@ -77,7 +83,7 @@ class DiceCFGenerator:
             logger.info(f"Loaded model from {self.model_path}")
             
             # Load and clean data (same preprocessing as model training)
-            from dataLoader import DataLoader
+            from src.utils.dataLoader import DataLoader
             loader = DataLoader(self.data_path)
             df = loader.load_data()
             if df is not None:

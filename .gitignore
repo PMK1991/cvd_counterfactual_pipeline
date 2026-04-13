@@ -17,6 +17,9 @@ docs/*.docx
 # Claude Code
 .claude/
 
+# Notebooks
+notebooks/
+
 # IDE
 .vscode/
 .idea/
