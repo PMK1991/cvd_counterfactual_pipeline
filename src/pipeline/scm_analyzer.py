@@ -41,7 +41,7 @@ class SCMAnalyzer:
     def _default_config(self) -> Dict:
         """Default SCM configuration"""
         return {
-            'n_samples': 1,
+            'n_samples': 1000,
             'train_data_path': 'data/heart_statlog_cleveland_hungary_final.csv',
             'graph_structure': 'full',          # 'minimal', 'full', or 'extended'
             'intervention_targets': 'both',     # 'both', 'chol_only', or 'trestbps_only'
@@ -73,16 +73,27 @@ class SCMAnalyzer:
         ('target', 'oldpeak'),
     ]
 
-    # Cross-layer domain-knowledge edges from nb_cvd_scm.ipynb
-    _CROSS_LAYER_EDGES = [
+    # Cross-layer risk-factor edges from nb_cvd_scm.ipynb (upstream of target)
+    _RISK_FACTOR_CROSSLINKS = [
         ('age', 'chol'),        # age affects lipid levels
         ('age', 'trestbps'),    # age affects blood pressure
         ('sex', 'trestbps'),    # sex-based BP differences
         ('sex', 'chol'),        # sex-based lipid differences
         ('chol', 'trestbps'),   # dyslipidemia raises BP
+    ]
+
+    # Symptom-to-symptom cross-links (downstream of target). These bypass the
+    # disease node and violate the conditional-independence assumption that
+    # symptoms depend on each other only through `target`, so they are now
+    # excluded from the default `full` variant. Kept here so the legacy
+    # `full_with_symptom_links` variant can reproduce earlier runs.
+    _SYMPTOM_CROSSLINKS = [
         ('thalach', 'exang'),   # high HR triggers exercise angina
         ('exang', 'cp'),        # exercise angina manifests as chest pain
     ]
+
+    # Backwards-compatible alias preserved for any external importers.
+    _CROSS_LAYER_EDGES = _RISK_FACTOR_CROSSLINKS + _SYMPTOM_CROSSLINKS
 
     # Extended edges: additional physiologically plausible relationships
     _EXTENDED_EDGES = [
@@ -93,8 +104,9 @@ class SCMAnalyzer:
 
     GRAPH_VARIANTS = {
         'minimal': _CORE_EDGES,
-        'full': _CORE_EDGES + _CROSS_LAYER_EDGES,
-        'extended': _CORE_EDGES + _CROSS_LAYER_EDGES + _EXTENDED_EDGES,
+        'full': _CORE_EDGES + _RISK_FACTOR_CROSSLINKS,
+        'full_with_symptom_links': _CORE_EDGES + _RISK_FACTOR_CROSSLINKS + _SYMPTOM_CROSSLINKS,
+        'extended': _CORE_EDGES + _RISK_FACTOR_CROSSLINKS + _EXTENDED_EDGES,
     }
 
     def _build_causal_model(self) -> gcm.InvertibleStructuralCausalModel:
@@ -348,10 +360,17 @@ class SCMAnalyzer:
     def load_counterfactuals_for_iteration(
         self, iteration_dir: str
     ) -> List[Dict]:
-        """Load all original/CF pairs for a specific iteration directory."""
+        """Load all original/CF pairs for a specific iteration directory.
+
+        Prefers `counterfactuals_projected/` (chol-only projections written by
+        DiceCFGenerator) when present, and falls back to `counterfactuals/` for
+        legacy iteration directories that only stored a single CF tree.
+        """
         iter_path = Path(iteration_dir)
         orig_dir = iter_path / "original"
-        cf_dir = iter_path / "counterfactuals"
+        projected_dir = iter_path / "counterfactuals_projected"
+        raw_dir = iter_path / "counterfactuals"
+        cf_dir = projected_dir if projected_dir.exists() else raw_dir
 
         if not orig_dir.exists() or not cf_dir.exists():
             logger.warning(f"Missing directories in {iteration_dir}")

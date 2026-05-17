@@ -82,8 +82,8 @@ PARAMETER_GRID = {
     },
     'n_samples': {
         'config_path': ['scm', 'n_samples'],
-        'values': [1, 5, 10],
-        'baseline': 1,
+        'values': [1, 100, 1000],
+        'baseline': 1000,
         'label': 'SCM interventional samples',
     },
 }
@@ -111,8 +111,16 @@ class SensitivityAnalyzer:
         self.n_iterations = n_iterations
         self.n_patients = n_patients
         self.n_workers = n_workers
-        self.baseline_results_path = baseline_results_path or (
-            'fresh_cf_iterations/aggregated_results/all_iteration_metrics.csv'
+        # Derive the baseline metrics path from the configured pipeline output
+        # so the default tracks ablation_filtered/ablation_unfiltered layouts.
+        baseline_output_dir = (
+            baseline_config.get('output', {}).get('base_dir')
+            or 'fresh_cf_iterations'
+        )
+        self.baseline_results_path = baseline_results_path or str(
+            Path(baseline_output_dir)
+            / 'aggregated_results'
+            / 'all_iteration_metrics.csv'
         )
         logger.info(
             f"Initialized SensitivityAnalyzer: {n_iterations} iterations, "
@@ -134,9 +142,18 @@ class SensitivityAnalyzer:
         for key in config_path[:-1]:
             node = node[key]
 
-        # Special handling for chol_lower: value is the lower bound only
+        # Special handling for chol_lower: keep the configured upper bound so
+        # only the lower bound varies. Writing [value, None] would re-enable
+        # the legacy dynamic-90%-of-original branch in DiceCFGenerator and
+        # confound the sweep with a second moving part.
         if param_name == 'chol_lower':
-            node[config_path[-1]] = [value, None]
+            current = node[config_path[-1]]
+            upper = (
+                current[1]
+                if isinstance(current, (list, tuple)) and len(current) > 1
+                else 200
+            )
+            node[config_path[-1]] = [value, upper]
         else:
             node[config_path[-1]] = value
 
@@ -364,7 +381,7 @@ class SensitivityAnalyzer:
             f"**Date:** {time.strftime('%Y-%m-%d %H:%M')}",
             f"**Iterations per variant:** {self.n_iterations}",
             f"**Patients per variant:** {self.n_patients}",
-            f"**Baseline reference:** 100 iterations, 48 patients",
+            f"**Baseline reference:** 100 iterations, test-set high-risk cohort",
             "",
         ]
 

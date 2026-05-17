@@ -36,15 +36,15 @@ logger = logging.getLogger(__name__)
 class DiceCFGenerator:
     """
     DiCE-based Counterfactual Generator
-    
+
     Generates counterfactuals using DiCE-ML genetic algorithm.
     Thread-safe and supports concurrent execution.
     """
-    
+
     def __init__(self, model_path: str, data_path: str, config: Optional[Dict] = None):
         """
         Initialize DiCE CF Generator
-        
+
         Args:
             model_path: Path to trained model pickle file
             data_path: Path to training data CSV
@@ -53,14 +53,14 @@ class DiceCFGenerator:
         self.model_path = model_path
         self.data_path = data_path
         self.config = config or self._default_config()
-        
+
         self.model = None
         self.dice_data = None
         self.dice_model = None
         self.dice_exp = None
-        
+
         logger.info(f"Initialized DiceCFGenerator with model: {model_path}")
-    
+
     def _default_config(self) -> Dict:
         """Default DiCE configuration"""
         return {
@@ -68,12 +68,23 @@ class DiceCFGenerator:
             'total_cfs': 5,
             'permitted_range': {
                 'trestbps': [100, 120],
-                'chol': [150, None]  # None means use 90% of original
+                'chol': [150, 200]
             },
-            'timeout': 30,
-            'features_to_vary': None  # None means all actionable features
+            'timeout': 45,
+            'features_to_vary': None,
+            'search_params': {
+                'maxiterations': 500,
+                'thresh': 0.01,
+                'proximity_weight': 0.5,
+                'sparsity_weight': 1.0,
+                'diversity_weight': 5.0,
+                'stopping_threshold': 0.5,
+                'posthoc_sparsity_algorithm': 'binary',
+                'posthoc_sparsity_param': 0.1,
+            },
+            'project_to_features': ['chol'],
         }
-    
+
     def load_model_and_data(self) -> None:
         """Load trained model and prepare data for DiCE"""
         try:
@@ -81,7 +92,7 @@ class DiceCFGenerator:
             with open(self.model_path, 'rb') as f:
                 self.model = pickle.load(f)
             logger.info(f"Loaded model from {self.model_path}")
-            
+
             # Load and clean data (same preprocessing as model training)
             from src.utils.dataLoader import DataLoader
             loader = DataLoader(self.data_path)
@@ -89,41 +100,41 @@ class DiceCFGenerator:
             if df is not None:
                 df = loader.remove_outliers_iqr(df)
             logger.info(f"Loaded data from {self.data_path}: {len(df)} rows")
-            
+
             # Prepare DiCE data object
             self.dice_data = Data(
                 dataframe=df,
                 continuous_features=['age', 'trestbps', 'chol', 'thalach', 'oldpeak'],
                 outcome_name='target'
             )
-            
+
             # Prepare DiCE model object
             self.dice_model = Model(model=self.model, backend='sklearn')
-            
+
             logger.info("Successfully prepared DiCE data and model objects")
-            
+
         except Exception as e:
             logger.error(f"Error loading model and data: {e}")
             raise
-    
+
     def setup_dice_explainer(self) -> None:
         """Setup DiCE explainer"""
         try:
             if self.dice_data is None or self.dice_model is None:
                 raise ValueError("Must call load_model_and_data() first")
-            
+
             self.dice_exp = Dice(
                 self.dice_data,
                 self.dice_model,
                 method=self.config['method']
             )
-            
+
             logger.info(f"DiCE explainer setup with method: {self.config['method']}")
-            
+
         except Exception as e:
             logger.error(f"Error setting up DiCE explainer: {e}")
             raise
-    
+
     def generate_counterfactuals(
         self,
         patient_data: pd.DataFrame,
@@ -131,19 +142,19 @@ class DiceCFGenerator:
     ) -> Optional[dice_ml.counterfactual_explanations.CounterfactualExplanations]:
         """
         Generate counterfactuals for a single patient
-        
+
         Args:
             patient_data: DataFrame with single patient row
             timeout: Timeout in seconds (uses config default if None)
-            
+
         Returns:
             DiCE CounterfactualExplanations object or None if failed
         """
         if self.dice_exp is None:
             raise ValueError("Must call setup_dice_explainer() first")
-        
+
         timeout = timeout or self.config['timeout']
-        
+
         # Prepare permitted range (handle dynamic chol limit)
         # Deep copy required: shallow copy shares inner lists, causing mutation
         # of the original config after the first patient's chol limit is set
@@ -151,10 +162,10 @@ class DiceCFGenerator:
         if permitted_range['chol'][1] is None:
             original_chol = patient_data['chol'].values[0]
             permitted_range['chol'][1] = original_chol - 0.1 * original_chol
-        
+
         # Use threading with timeout for robustness
         result_queue = queue.Queue()
-        
+
         def target():
             try:
                 kwargs = dict(
@@ -165,22 +176,51 @@ class DiceCFGenerator:
                 )
                 if self.config.get('features_to_vary') is not None:
                     kwargs['features_to_vary'] = self.config['features_to_vary']
+                kwargs.update(self.config.get('search_params', {}))
                 cf_result = self.dice_exp.generate_counterfactuals(**kwargs)
                 result_queue.put(cf_result)
             except Exception as e:
                 logger.warning(f"DiCE generation failed: {e}")
                 result_queue.put(None)
-        
-        thread = threading.Thread(target=target)
+
+        thread = threading.Thread(target=target, daemon=True)
         thread.start()
         thread.join(timeout)
-        
+
         if thread.is_alive():
             logger.warning(f"DiCE generation timed out after {timeout}s")
             return None
-        
+
         return result_queue.get() if not result_queue.empty() else None
-    
+
+    def _project_counterfactuals(
+        self,
+        original_df: pd.DataFrame,
+        final_cfs: pd.DataFrame,
+    ) -> pd.DataFrame:
+        """
+        Project broad DiCE CFs onto selected actionable features.
+
+        This preserves the older notebook workflow: let DiCE search broadly,
+        then impute only BP/chol values back into the original patient row.
+        """
+        projection_features = self.config.get('project_to_features')
+        if not projection_features:
+            return final_cfs
+
+        original_row = original_df.iloc[0:1].copy()
+        projected_rows = []
+        for _, cf_row in final_cfs.iterrows():
+            projected = original_row.copy()
+            for feature in projection_features:
+                if feature in projected.columns and feature in final_cfs.columns:
+                    projected[feature] = cf_row[feature]
+            if 'target' in final_cfs.columns:
+                projected['target'] = cf_row['target']
+            projected_rows.append(projected)
+
+        return pd.concat(projected_rows, ignore_index=True) if projected_rows else final_cfs
+
     def save_counterfactuals(
         self,
         cf_result: dice_ml.counterfactual_explanations.CounterfactualExplanations,
@@ -190,24 +230,31 @@ class DiceCFGenerator:
     ) -> Tuple[str, List[str]]:
         """
         Save counterfactuals to disk
-        
+
         Args:
             cf_result: DiCE counterfactual result
             iteration_num: Iteration number
             patient_id: Patient ID
             output_dir: Base output directory
-            
+
         Returns:
             Tuple of (original_path, list of cf_paths)
         """
-        # Create directory structure
+        # Create directory structure. Raw DiCE CFs go to counterfactuals/;
+        # the chol-only projection used downstream by SCM validation goes to
+        # counterfactuals_projected/. The two are kept side-by-side so the
+        # unfiltered ablation can score raw CFs while the SCM path consumes
+        # the projected version, keeping the ablation a true apples-to-apples
+        # comparison.
         iter_dir = Path(output_dir) / f"iteration_{iteration_num:03d}"
         orig_dir = iter_dir / "original"
-        cf_dir = iter_dir / "counterfactuals"
-        
+        raw_cf_dir = iter_dir / "counterfactuals"
+        projected_cf_dir = iter_dir / "counterfactuals_projected"
+
         orig_dir.mkdir(parents=True, exist_ok=True)
-        cf_dir.mkdir(parents=True, exist_ok=True)
-        
+        raw_cf_dir.mkdir(parents=True, exist_ok=True)
+        projected_cf_dir.mkdir(parents=True, exist_ok=True)
+
         # Access CFs via cf_examples_list (DiCE API)
         cf_example = cf_result.cf_examples_list[0]
 
@@ -219,15 +266,25 @@ class DiceCFGenerator:
         cf_paths = []
         final_cfs = cf_example.final_cfs_df
         if final_cfs is not None and len(final_cfs) > 0:
-            for i, cf_row in final_cfs.iterrows():
-                cf_path = cf_dir / f"patient_{patient_id}_cf_{i}.csv"
-                cf_row.to_frame().T.to_csv(cf_path, index=False)
-                cf_paths.append(str(cf_path))
-        
+            projected_cfs = self._project_counterfactuals(
+                cf_example.test_instance_df,
+                final_cfs,
+            )
+            # DiCE's final_cfs_df can carry duplicate row indices, so use
+            # enumerate to produce a unique file index per CF; otherwise
+            # multiple raw rows collapse onto the same file path.
+            for i, (_, cf_row) in enumerate(final_cfs.iterrows()):
+                raw_path = raw_cf_dir / f"patient_{patient_id}_cf_{i}.csv"
+                cf_row.to_frame().T.to_csv(raw_path, index=False)
+                cf_paths.append(str(raw_path))
+            for i, (_, cf_row) in enumerate(projected_cfs.iterrows()):
+                proj_path = projected_cf_dir / f"patient_{patient_id}_cf_{i}.csv"
+                cf_row.to_frame().T.to_csv(proj_path, index=False)
+
         logger.debug(f"Saved {len(cf_paths)} CFs for patient {patient_id}, iteration {iteration_num}")
-        
+
         return str(orig_path), cf_paths
-    
+
     def generate_and_save_for_patient(
         self,
         patient_data: pd.DataFrame,
@@ -237,13 +294,13 @@ class DiceCFGenerator:
     ) -> Dict:
         """
         Complete workflow: generate and save CFs for one patient
-        
+
         Args:
             patient_data: Patient DataFrame
             patient_id: Patient ID
             iteration_num: Iteration number
             output_dir: Output directory
-            
+
         Returns:
             Dictionary with results summary
         """
@@ -255,11 +312,11 @@ class DiceCFGenerator:
             'original_path': None,
             'cf_paths': []
         }
-        
+
         try:
             # Generate CFs
             cf_result = self.generate_counterfactuals(patient_data)
-            
+
             if (cf_result is not None
                     and cf_result.cf_examples_list
                     and cf_result.cf_examples_list[0].final_cfs_df is not None):
@@ -267,17 +324,17 @@ class DiceCFGenerator:
                 orig_path, cf_paths = self.save_counterfactuals(
                     cf_result, iteration_num, patient_id, output_dir
                 )
-                
+
                 result['success'] = True
                 result['n_cfs_generated'] = len(cf_paths)
                 result['original_path'] = orig_path
                 result['cf_paths'] = cf_paths
             else:
                 logger.warning(f"No CFs generated for patient {patient_id}")
-                
+
         except Exception as e:
             logger.error(f"Error in generate_and_save for patient {patient_id}: {e}")
-        
+
         return result
 
 

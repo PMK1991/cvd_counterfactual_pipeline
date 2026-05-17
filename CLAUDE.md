@@ -15,9 +15,21 @@ This is a **Cardiovascular Disease (CVD) Counterfactual Analysis Pipeline** for 
 python src/pipeline/fresh_cf_pipeline.py --test_mode
 ```
 
-**Full pipeline** (48 patients, 100 iterations):
+**Full pipeline** (test-set true-positive high-risk cohort, 100 iterations):
 ```bash
-python src/pipeline/fresh_cf_pipeline.py --n_iterations 100 --n_patients 48 --n_workers 4
+python src/pipeline/fresh_cf_pipeline.py --n_iterations 100 --n_workers 4
+```
+
+Full mode uses the same cleaned test split as training (`test_size=0.2`, `random_state=42`) and selects true-positive high-risk test-set patients (`target=1` and model prediction `1`). `--n_patients` is only a debug cap in `--test_mode`.
+
+**Unfiltered ablation** (raw DiCE CFs scored by classifier, no SCM validation):
+```bash
+python src/pipeline/fresh_cf_pipeline.py --n_iterations 100 --n_workers 4 --no_scm_filter
+```
+
+**Optional patient-level bootstrap**:
+```bash
+python src/pipeline/fresh_cf_pipeline.py --run_patient_bootstrap --bootstrap_iterations 1000
 ```
 
 **Custom configuration**:
@@ -42,7 +54,7 @@ python src/pipeline/fresh_cf_pipeline.py --sensitivity --sensitivity_iterations 
 python src/pipeline/fresh_cf_pipeline.py --sensitivity --sensitivity_params total_cfs trestbps_range chol_lower
 ```
 
-Available parameters: `total_cfs`, `trestbps_range`, `chol_lower`, `confidence_level`
+Available parameters: `total_cfs`, `trestbps_range`, `chol_lower`, `confidence_level`, `graph_structure`, `intervention_targets`, `n_samples`
 
 ### Training the Model
 
@@ -68,10 +80,12 @@ pip install -r requirements.txt
 ### Configuration
 
 Edit `pipeline_config.yaml` to adjust:
-- Number of iterations and patients
+- Number of iterations and test-mode patient cap
 - Number of concurrent workers
 - DiCE parameters (method, total_cfs, permitted_range, timeout)
-- SCM sampling parameters
+- SCM sampling and graph-structure parameters
+- SCM-filtered vs unfiltered ablation mode
+- Optional patient-level bootstrap
 - Confidence interval level
 
 ## Architecture
@@ -86,7 +100,10 @@ src/
 │   ├── scm_analyzer.py         # SCM validation using DoWhy
 │   ├── metrics_calculator.py   # Diagnostic metrics
 │   ├── ci_computer.py          # Confidence interval calculation
-│   └── sensitivity_analyzer.py # Sensitivity analysis
+│   ├── sensitivity_analyzer.py # Sensitivity analysis
+│   ├── ev_calculator.py        # Target-flip robustness index (E-value-like)
+│   ├── patient_bootstrap.py    # Patient-level bootstrap CIs
+│   └── cohort_flowchart.py     # Cohort flowchart rendering
 ├── training/          # Model training
 │   └── train_model.py          # XGBoost pipeline training
 ├── utils/             # Utility/helper classes
@@ -143,10 +160,15 @@ The pipeline follows a **modular, concurrent architecture** with these independe
    - Confidence level is handled post-hoc (recomputes CIs from baseline data, no pipeline rerun)
    - Generates comparison CSVs and markdown sensitivity report
 
+7. **Additional analysis modules**
+   - `ev_calculator.py` computes a target-flip robustness index (single-arm flip odds plugged into the VanderWeele-Ding E-value formula; not the published two-arm quantity) in `aggregated_results/evalue.json`
+   - `patient_bootstrap.py` computes optional patient-cluster inferential CIs in `patient_bootstrap_ci.csv`
+   - `cohort_flowchart.py` renders `cohort_counts.json` to `cohort_flowchart.png`
+
 ### Key Data Flow
 
 ```
-Load high-risk patients (target=1)
+Load test-set true-positive high-risk patients (target=1, prediction=1)
 ↓
 [Parallel Execution: n_workers processes]
 ↓
@@ -158,7 +180,7 @@ For each iteration:
 ↓
 CIComputer: Aggregate all iterations
 ↓
-Output: aggregated_results/{all_iteration_metrics.csv, ci_results.csv, summary_report.md}
+Output: aggregated_results/{all_iteration_metrics.csv, ci_results.csv, summary_report.md, evalue.json, cohort_counts.json}
 ```
 
 ### Legacy Components
@@ -211,7 +233,10 @@ fresh_cf_iterations/              # or fresh_cf_iterations_test/ in test mode
 │   └── ...
 ├── aggregated_results/
 │   ├── all_iteration_metrics.csv # All iteration results
-│   ├── ci_results.csv            # Confidence intervals for all metrics
+│   ├── ci_results.csv            # Algorithmic-stability intervals
+│   ├── patient_bootstrap_ci.csv  # Optional inferential intervals
+│   ├── evalue.json               # Target-flip robustness index
+│   ├── cohort_counts.json        # Cohort accounting
 │   └── summary_report.md         # Human-readable summary
 ├── fresh_cf_pipeline.log         # Detailed execution logs
 └── sensitivity_results/          # Sensitivity analysis output
@@ -233,14 +258,16 @@ fresh_cf_iterations/              # or fresh_cf_iterations_test/ in test mode
 ### DiCE Configuration
 - **Method**: genetic (more robust than gradient-based for this dataset)
 - **Timeout**: 30 seconds per patient (configurable in pipeline_config.yaml)
+- **Features to vary**: `trestbps` and `chol`
 - **Permitted ranges**:
   - `trestbps`: [100, 120] (target healthy BP range)
-  - `chol`: [150, 90% of original] (cholesterol reduction)
+  - `chol`: [150, 200] (fixed cholesterol intervention range)
 
 ### SCM Validation
 - Uses `InvertibleStructuralCausalModel` with 3-layer DAG: Risk Factors → target → Symptoms
+- Default `graph_structure: full` = core 3 layers + risk-factor cross-links (`age→chol`, `age→trestbps`, `sex→trestbps`, `sex→chol`, `chol→trestbps`). Symptom-to-symptom cross-links (`thalach→exang`, `exang→cp`) are excluded — use `full_with_symptom_links` to reproduce the legacy graph
 - Only counterfactuals that flip target from 1→0 are considered "successful"
-- Uses DoWhy's `gcm.interventional_samples()` with deterministic seed per patient-CF pair
+- Uses DoWhy's `gcm.interventional_samples()` with deterministic seed per patient-CF pair and default `n_samples=1000`
 - Applies physiological constraints to ensure realistic outputs (oldpeak ≥ 0, cp ∈ [1,4], etc.)
 - Categorical columns (`target`, `exang`, `fbs`, `cp`, `restecg`, `slope`) cast to `category` dtype
 
