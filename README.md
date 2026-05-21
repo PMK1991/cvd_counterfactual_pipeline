@@ -249,11 +249,6 @@ python src/pipeline/fresh_cf_pipeline.py --n_iterations 100 --n_workers 4
 
 Full mode uses the same cleaned 80/20 split as model training (`test_size=0.2`, `random_state=42`) and selects true-positive high-risk patients from the test set (`target=1` and model prediction `1`). `--n_patients` is a debug cap only in `--test_mode`.
 
-**Unfiltered ablation** (skip SCM validation and score raw DiCE CFs):
-```bash
-python src/pipeline/fresh_cf_pipeline.py --n_iterations 100 --n_workers 4 --no_scm_filter
-```
-
 **Patient-level bootstrap** (inferential intervals from cached successful CFs):
 ```bash
 python src/pipeline/fresh_cf_pipeline.py --run_patient_bootstrap --bootstrap_iterations 1000
@@ -269,7 +264,7 @@ python src/pipeline/fresh_cf_pipeline.py --sensitivity
 
 ### 5. View Results
 
-Results are saved to `fresh_cf_iterations/ablation_filtered/aggregated_results/`:
+Results are saved to `fresh_cf_iterations/aggregated_results/`:
 - `summary_report.md` — human-readable table with algorithmic-stability intervals
 - `ci_results.csv` — full algorithmic-stability interval data for all metrics
 - `all_iteration_metrics.csv` — raw metrics from each iteration
@@ -305,7 +300,7 @@ Results are saved to `fresh_cf_iterations/ablation_filtered/aggregated_results/`
 | slope | Categorical | Slope of peak exercise ST segment | 1-3 |
 | target | Binary | CVD diagnosis | 0, 1 |
 
-**Direct intervention target in the final analysis:** `chol`. DiCE searches broadly, but persisted/analyzed counterfactuals are projected to cholesterol-only changes before SCM validation. Blood pressure (`trestbps`) and symptom features are downstream SCM-propagated variables, not direct interventions in the final run.
+**Direct intervention target in the final analysis:** `chol`. Blood pressure (`trestbps`) and symptom features are downstream SCM-propagated variables, not direct interventions in the final run.
 
 ## Cohort Definition and Interval Semantics
 
@@ -322,7 +317,6 @@ pipeline:
   n_iterations: 100        # Number of fresh CF generation rounds
   n_patients: 48            # Test-mode debug cap only
   n_workers: 4              # Concurrent worker processes
-  use_scm_filter: true      # false enables raw-DiCE ablation mode
   run_patient_bootstrap: false
   bootstrap_iterations: 1000
 
@@ -330,10 +324,9 @@ dice:
   method: "genetic"         # DiCE algorithm
   total_cfs: 5              # CFs generated per patient
   features_to_vary: null    # Broad DiCE search
-  project_to_features: ["chol"]
   permitted_range:
-    trestbps: [100, 120]    # Retained for sensitivity/alternate configs
-    chol: [150, 200]        # Fixed cholesterol intervention range
+    trestbps: [100, 120]
+    chol: [150, 200]        # Cholesterol intervention range
   timeout: 45               # Seconds per patient
 
 scm:

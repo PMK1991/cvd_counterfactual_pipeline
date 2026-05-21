@@ -360,17 +360,10 @@ class SCMAnalyzer:
     def load_counterfactuals_for_iteration(
         self, iteration_dir: str
     ) -> List[Dict]:
-        """Load all original/CF pairs for a specific iteration directory.
-
-        Prefers `counterfactuals_projected/` (chol-only projections written by
-        DiceCFGenerator) when present, and falls back to `counterfactuals/` for
-        legacy iteration directories that only stored a single CF tree.
-        """
+        """Load all original/CF pairs for a specific iteration directory."""
         iter_path = Path(iteration_dir)
         orig_dir = iter_path / "original"
-        projected_dir = iter_path / "counterfactuals_projected"
-        raw_dir = iter_path / "counterfactuals"
-        cf_dir = projected_dir if projected_dir.exists() else raw_dir
+        cf_dir = iter_path / "counterfactuals"
 
         if not orig_dir.exists() or not cf_dir.exists():
             logger.warning(f"Missing directories in {iteration_dir}")

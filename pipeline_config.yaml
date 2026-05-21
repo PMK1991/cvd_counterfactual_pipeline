@@ -6,7 +6,6 @@ pipeline:
   n_patients: 48     # Debug cap used only in test mode; full mode uses test-set true-positive cohort
   n_workers: 4       # Number of concurrent workers (adjust based on CPU cores)
   test_mode: false   # Set to true for quick testing (5 patients, 5 iterations)
-  use_scm_filter: true
   run_patient_bootstrap: false
   bootstrap_iterations: 1000
 
@@ -15,7 +14,7 @@ dice:
   data_path: "data/heart_statlog_cleveland_hungary_final.csv"
   method: "genetic"
   total_cfs: 5
-  features_to_vary: null  # Broad DiCE search; saved CFs are projected to cholesterol only
+  features_to_vary: null
   search_params:
     maxiterations: 500
     thresh: 0.01
@@ -25,7 +24,6 @@ dice:
     stopping_threshold: 0.5
     posthoc_sparsity_algorithm: "binary"
     posthoc_sparsity_param: 0.1
-  project_to_features: ["chol"]
   permitted_range:
     trestbps: [100, 120]
     chol: [150, 200]
@@ -37,7 +35,7 @@ scm:
   intervention_targets: "chol_only"
 
 output:
-  base_dir: "fresh_cf_iterations/ablation_filtered"
+  base_dir: "fresh_cf_iterations"
   keep_all_iterations: false  # Set true to keep all CF files (uses more disk space)
 
 ci:

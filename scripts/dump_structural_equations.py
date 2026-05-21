@@ -8,7 +8,7 @@ human-readable Markdown summary of the per-node mechanisms.
 
 Usage:
     python scripts/dump_structural_equations.py \
-        --output_dir fresh_cf_iterations/ablation_filtered/aggregated_results
+        --output_dir fresh_cf_iterations/aggregated_results
 """
 
 import argparse

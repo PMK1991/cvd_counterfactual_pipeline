@@ -22,11 +22,6 @@ python src/pipeline/fresh_cf_pipeline.py --n_iterations 100 --n_workers 4
 
 Full mode uses the same cleaned test split as training (`test_size=0.2`, `random_state=42`) and selects true-positive high-risk test-set patients (`target=1` and model prediction `1`). `--n_patients` is only a debug cap in `--test_mode`.
 
-**Unfiltered ablation** (raw DiCE CFs scored by classifier, no SCM validation):
-```bash
-python src/pipeline/fresh_cf_pipeline.py --n_iterations 100 --n_workers 4 --no_scm_filter
-```
-
 **Optional patient-level bootstrap**:
 ```bash
 python src/pipeline/fresh_cf_pipeline.py --run_patient_bootstrap --bootstrap_iterations 1000
@@ -84,7 +79,6 @@ Edit `pipeline_config.yaml` to adjust:
 - Number of concurrent workers
 - DiCE parameters (method, total_cfs, permitted_range, timeout)
 - SCM sampling and graph-structure parameters
-- SCM-filtered vs unfiltered ablation mode
 - Optional patient-level bootstrap
 - Confidence interval level
 

@@ -111,8 +111,7 @@ class SensitivityAnalyzer:
         self.n_iterations = n_iterations
         self.n_patients = n_patients
         self.n_workers = n_workers
-        # Derive the baseline metrics path from the configured pipeline output
-        # so the default tracks ablation_filtered/ablation_unfiltered layouts.
+        # Derive the baseline metrics path from the configured pipeline output.
         baseline_output_dir = (
             baseline_config.get('output', {}).get('base_dir')
             or 'fresh_cf_iterations'

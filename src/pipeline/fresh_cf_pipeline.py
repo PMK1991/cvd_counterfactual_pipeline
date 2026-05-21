@@ -86,7 +86,6 @@ class FreshCFPipeline:
                 'n_patients': 48,
                 'n_workers': 4,  # Number of concurrent workers
                 'test_mode': False,
-                'use_scm_filter': True,
                 'run_patient_bootstrap': False,
                 'bootstrap_iterations': 1000,
             },
@@ -111,7 +110,6 @@ class FreshCFPipeline:
                     'posthoc_sparsity_algorithm': 'binary',
                     'posthoc_sparsity_param': 0.1,
                 },
-                'project_to_features': ['chol'],
             },
             'scm': {
                 'n_samples': 1000,
@@ -119,7 +117,7 @@ class FreshCFPipeline:
                 'intervention_targets': 'chol_only',
             },
             'output': {
-                'base_dir': 'fresh_cf_iterations/ablation_filtered',
+                'base_dir': 'fresh_cf_iterations',
                 'keep_all_iterations': False
             },
             'ci': {
@@ -139,9 +137,8 @@ class FreshCFPipeline:
         self.dice_generator.setup_dice_explainer()
 
         # SCM Analyzer
-        if self.config['pipeline'].get('use_scm_filter', True):
-            self.scm_analyzer = SCMAnalyzer(config=self.config['scm'])
-            self.scm_analyzer.initialize_analyzer()
+        self.scm_analyzer = SCMAnalyzer(config=self.config['scm'])
+        self.scm_analyzer.initialize_analyzer()
 
         # Metrics Calculator
         self.metrics_calculator = MetricsCalculator()
@@ -205,61 +202,12 @@ class FreshCFPipeline:
         successful_cfs.to_csv(output_file, index=False)
         return str(output_file)
 
-    def _load_raw_cf_pairs(self, iteration_dir: Path) -> List[Dict]:
-        """Load original/raw DiCE CF pairs from an iteration directory."""
-        orig_dir = iteration_dir / "original"
+    def _count_raw_cf_pairs(self, iteration_dir: Path) -> int:
+        """Count generated CF files for an iteration (used for flip-rate denom)."""
         cf_dir = iteration_dir / "counterfactuals"
-        if not orig_dir.exists() or not cf_dir.exists():
-            return []
-
-        pairs = []
-        for orig_file in orig_dir.glob("patient_*.csv"):
-            patient_id = orig_file.stem.replace("patient_", "")
-            original = pd.read_csv(orig_file)
-            for cf_file in cf_dir.glob(f"patient_{patient_id}_cf_*.csv"):
-                pairs.append({
-                    'patient_id': patient_id,
-                    'original': original,
-                    'cf_suggestion': pd.read_csv(cf_file),
-                    'cf_file': str(cf_file),
-                })
-        return pairs
-
-    @staticmethod
-    def _metric_row_from_raw_cf(original: pd.DataFrame, cf_suggestion: pd.DataFrame) -> Dict:
-        """Convert raw DiCE output into MetricsCalculator-compatible columns."""
-        orig_row = original.iloc[0]
-        cf_row = cf_suggestion.iloc[0]
-        features = [
-            col for col in orig_row.index
-            if col != 'target' and col in cf_row.index
-        ]
-        result = {}
-        for col in features:
-            result[f'orig_{col}'] = orig_row[col]
-            result[f'cf_{col}'] = cf_row[col]
-        result['target'] = 0
-        return result
-
-    def analyze_iteration_unfiltered(
-        self,
-        iteration_dir: Path,
-        model_path: str,
-    ) -> pd.DataFrame:
-        """Score raw DiCE CFs with the classifier, without SCM validation."""
-        with open(model_path, 'rb') as f:
-            model = pickle.load(f)
-
-        successful_rows = []
-        for pair in self._load_raw_cf_pairs(iteration_dir):
-            cf_features = pair['cf_suggestion'].drop(columns=['target'], errors='ignore')
-            prediction = model.predict(cf_features)[0]
-            if int(prediction) == 0:
-                row = self._metric_row_from_raw_cf(pair['original'], pair['cf_suggestion'])
-                row['patient_id'] = pair['patient_id']
-                successful_rows.append(row)
-
-        return pd.DataFrame(successful_rows)
+        if not cf_dir.exists():
+            return 0
+        return sum(1 for _ in cf_dir.glob("patient_*_cf_*.csv"))
 
     def run_single_iteration(self, iteration_num: int, patients_df: pd.DataFrame) -> Dict:
         """
@@ -308,22 +256,16 @@ class FreshCFPipeline:
                 )
                 cf_results.append(result)
 
-            total_generated_cfs = len(self._load_raw_cf_pairs(iteration_dir))
+            total_generated_cfs = self._count_raw_cf_pairs(iteration_dir)
             total_requested_cfs = len(patients_df) * self.config['dice']['total_cfs']
 
-            # Step 2: Run validation/ablation analysis
-            if self.config['pipeline'].get('use_scm_filter', True):
-                scm_analyzer = SCMAnalyzer(config=self.config['scm'])
-                scm_analyzer.initialize_analyzer()
+            # Step 2: SCM validation
+            scm_analyzer = SCMAnalyzer(config=self.config['scm'])
+            scm_analyzer.initialize_analyzer()
 
-                successful_cfs = scm_analyzer.analyze_iteration(
-                    iteration_dir=str(iteration_dir)
-                )
-            else:
-                successful_cfs = self.analyze_iteration_unfiltered(
-                    iteration_dir=iteration_dir,
-                    model_path=self.config['dice']['model_path'],
-                )
+            successful_cfs = scm_analyzer.analyze_iteration(
+                iteration_dir=str(iteration_dir)
+            )
 
             self._save_successful_cfs(successful_cfs, iteration_dir)
 
@@ -528,7 +470,6 @@ def main():
     parser.add_argument('--n_patients', type=int, default=None, help='Patient cap (used only in --test_mode)')
     parser.add_argument('--n_workers', type=int, default=None, help='Number of concurrent workers (overrides YAML)')
     parser.add_argument('--test_mode', action='store_true', help='Run in test mode (5 patients, 5 iterations)')
-    parser.add_argument('--no_scm_filter', action='store_true', help='Skip SCM validation and score raw DiCE CFs with the classifier')
     parser.add_argument('--run_patient_bootstrap', action='store_true', help='Run patient-level bootstrap after the pipeline')
     parser.add_argument('--bootstrap_only', action='store_true', help='Skip the pipeline; only bootstrap from cached successful CFs in output.base_dir')
     parser.add_argument('--bootstrap_iterations', type=int, default=None, help='Patient bootstrap replicates')
@@ -556,7 +497,6 @@ def main():
         if args.n_workers is not None:
             config['pipeline']['n_workers'] = args.n_workers
     config['pipeline']['test_mode'] = args.test_mode
-    config['pipeline']['use_scm_filter'] = not args.no_scm_filter
     if args.run_patient_bootstrap or args.bootstrap_only:
         config['pipeline']['run_patient_bootstrap'] = True
     if args.bootstrap_iterations is not None:
@@ -564,9 +504,6 @@ def main():
 
     if args.test_mode:
         config['output']['base_dir'] = 'fresh_cf_iterations_test'
-    else:
-        ablation_dir = 'ablation_filtered' if config['pipeline']['use_scm_filter'] else 'ablation_unfiltered'
-        config['output']['base_dir'] = str(Path('fresh_cf_iterations') / ablation_dir)
 
     if args.sensitivity:
         from src.pipeline.sensitivity_analyzer import SensitivityAnalyzer

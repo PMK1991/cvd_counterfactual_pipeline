@@ -82,7 +82,6 @@ class DiceCFGenerator:
                 'posthoc_sparsity_algorithm': 'binary',
                 'posthoc_sparsity_param': 0.1,
             },
-            'project_to_features': ['chol'],
         }
 
     def load_model_and_data(self) -> None:
@@ -193,34 +192,6 @@ class DiceCFGenerator:
 
         return result_queue.get() if not result_queue.empty() else None
 
-    def _project_counterfactuals(
-        self,
-        original_df: pd.DataFrame,
-        final_cfs: pd.DataFrame,
-    ) -> pd.DataFrame:
-        """
-        Project broad DiCE CFs onto selected actionable features.
-
-        This preserves the older notebook workflow: let DiCE search broadly,
-        then impute only BP/chol values back into the original patient row.
-        """
-        projection_features = self.config.get('project_to_features')
-        if not projection_features:
-            return final_cfs
-
-        original_row = original_df.iloc[0:1].copy()
-        projected_rows = []
-        for _, cf_row in final_cfs.iterrows():
-            projected = original_row.copy()
-            for feature in projection_features:
-                if feature in projected.columns and feature in final_cfs.columns:
-                    projected[feature] = cf_row[feature]
-            if 'target' in final_cfs.columns:
-                projected['target'] = cf_row['target']
-            projected_rows.append(projected)
-
-        return pd.concat(projected_rows, ignore_index=True) if projected_rows else final_cfs
-
     def save_counterfactuals(
         self,
         cf_result: dice_ml.counterfactual_explanations.CounterfactualExplanations,
@@ -240,20 +211,12 @@ class DiceCFGenerator:
         Returns:
             Tuple of (original_path, list of cf_paths)
         """
-        # Create directory structure. Raw DiCE CFs go to counterfactuals/;
-        # the chol-only projection used downstream by SCM validation goes to
-        # counterfactuals_projected/. The two are kept side-by-side so the
-        # unfiltered ablation can score raw CFs while the SCM path consumes
-        # the projected version, keeping the ablation a true apples-to-apples
-        # comparison.
         iter_dir = Path(output_dir) / f"iteration_{iteration_num:03d}"
         orig_dir = iter_dir / "original"
-        raw_cf_dir = iter_dir / "counterfactuals"
-        projected_cf_dir = iter_dir / "counterfactuals_projected"
+        cf_dir = iter_dir / "counterfactuals"
 
         orig_dir.mkdir(parents=True, exist_ok=True)
-        raw_cf_dir.mkdir(parents=True, exist_ok=True)
-        projected_cf_dir.mkdir(parents=True, exist_ok=True)
+        cf_dir.mkdir(parents=True, exist_ok=True)
 
         # Access CFs via cf_examples_list (DiCE API)
         cf_example = cf_result.cf_examples_list[0]
@@ -266,20 +229,12 @@ class DiceCFGenerator:
         cf_paths = []
         final_cfs = cf_example.final_cfs_df
         if final_cfs is not None and len(final_cfs) > 0:
-            projected_cfs = self._project_counterfactuals(
-                cf_example.test_instance_df,
-                final_cfs,
-            )
             # DiCE's final_cfs_df can carry duplicate row indices, so use
-            # enumerate to produce a unique file index per CF; otherwise
-            # multiple raw rows collapse onto the same file path.
+            # enumerate to produce a unique file index per CF.
             for i, (_, cf_row) in enumerate(final_cfs.iterrows()):
-                raw_path = raw_cf_dir / f"patient_{patient_id}_cf_{i}.csv"
-                cf_row.to_frame().T.to_csv(raw_path, index=False)
-                cf_paths.append(str(raw_path))
-            for i, (_, cf_row) in enumerate(projected_cfs.iterrows()):
-                proj_path = projected_cf_dir / f"patient_{patient_id}_cf_{i}.csv"
-                cf_row.to_frame().T.to_csv(proj_path, index=False)
+                cf_path = cf_dir / f"patient_{patient_id}_cf_{i}.csv"
+                cf_row.to_frame().T.to_csv(cf_path, index=False)
+                cf_paths.append(str(cf_path))
 
         logger.debug(f"Saved {len(cf_paths)} CFs for patient {patient_id}, iteration {iteration_num}")
 
