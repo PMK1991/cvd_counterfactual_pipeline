@@ -271,6 +271,8 @@ Results are saved to `fresh_cf_iterations/aggregated_results/`:
 - `evalue.json` — target-flip robustness index (single-arm odds plugged into the E-value formula; not a published E-value)
 - `cohort_counts.json` — row counts for cohort construction
 - `patient_bootstrap_ci.csv` — optional patient-level inferential intervals
+- `structural_equations.md` / `structural_equations.json` — per-node SCM mechanisms in open form (`X = f(parents) + ε`) and closed form where the auto-assigned estimator allows it; regenerate with `python scripts/dump_structural_equations.py --output_dir fresh_cf_iterations/aggregated_results`
+- `structural_equations_open_closed.md` — longer-form write-up pairing open and closed forms with empirical noise summaries
 
 ## Dataset
 
