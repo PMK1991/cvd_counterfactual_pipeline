@@ -6,7 +6,7 @@ A reproducible pipeline for generating and validating counterfactual explanation
 
 Counterfactual explanations answer: *"What minimal changes to a patient's clinical profile would flip their CVD risk prediction from high-risk to low-risk?"*
 
-This pipeline addresses a key challenge: counterfactual generators like DiCE produce statistically valid but not necessarily **causally plausible** explanations. The final analysis lets DiCE search broadly, projects each generated counterfactual to a cholesterol-only change, and validates that intervention through an SCM that encodes cardiovascular domain knowledge.
+This pipeline addresses a key challenge: counterfactual generators like DiCE produce statistically valid but not necessarily **causally plausible** explanations. The final analysis lets DiCE search broadly under fixed `chol` and `trestbps` ranges, then validates each candidate through an SCM that intervenes on `chol` and propagates the effect through a cardiovascular DAG.
 
 ## Pipeline Architecture
 
@@ -55,13 +55,7 @@ This pipeline addresses a key challenge: counterfactual generators like DiCE pro
               │  │ Genetic algorithm, broad search        │  │
               │  │ 5 CFs requested per patient            │  │
               │  │ chol constrained to [150, 200]         │  │
-              │  └──────────────────┬────────────────────┘  │
-              │                     │                       │
-              │                     ▼                       │
-              │  ┌───────────────────────────────────────┐  │
-              │  │ Cholesterol-only Projection            │  │
-              │  │ Keep cf_chol from DiCE                 │  │
-              │  │ Reset all other features to original   │  │
+              │  │ trestbps constrained to [100, 120]     │  │
               │  └──────────────────┬────────────────────┘  │
               │                     │                       │
               │                     ▼                       │
@@ -110,7 +104,7 @@ This pipeline addresses a key challenge: counterfactual generators like DiCE pro
 
 **Key design choices:**
 - **True-positive cohort** restricts full-mode analysis to held-out test-set patients with `target=1` and model prediction `1`
-- **Broad DiCE search with cholesterol-only projection** preserves the high-yield historical workflow while analyzing only `do(chol)`
+- **Broad DiCE search with SCM `do(chol)` validation** lets DiCE explore the feature space while the SCM filters to candidates that flip `target` under a cholesterol intervention
 - **Fixed random seed per patient-CF pair** ensures deterministic SCM results for a given projected CF; variation comes from DiCE's stochastic CF generation across iterations
 - **Parallel execution** via `ProcessPoolExecutor` with configurable worker count
 - **Physiological constraints** enforce clinically valid ranges (e.g., oldpeak >= 0, cp in [1,4])
@@ -354,44 +348,44 @@ The graph encodes three layers:
 
 With edges: risk factors → target → symptoms, plus direct risk-factor linkages (`age → chol`, `age → trestbps`, `sex → trestbps`, `sex → chol`, `chol → trestbps`). Symptom-to-symptom cross-links (`thalach → exang`, `exang → cp`) are *excluded* from the default `full` variant to preserve the conditional-independence assumption that symptoms depend on each other only through `target`; the legacy graph that included them is reachable via `graph_structure: full_with_symptom_links`.
 
-**Intervention mechanism:** the final run uses `do(chol=X)` only. DiCE may search broadly, but each candidate is projected back onto the original patient row with only `chol` changed before SCM validation. DoWhy's `gcm.interventional_samples()` then propagates the cholesterol intervention through the DAG; `trestbps`, `cp`, `exang`, `oldpeak`, `thalach`, `slope`, and `restecg` are interpreted as downstream SCM effects. A fixed random seed derived from patient features ensures deterministic results per patient-CF pair.
+**Intervention mechanism:** the final run uses `do(chol=X)` only. DiCE searches broadly within the configured `chol` and `trestbps` ranges, but SCM validation reads only the `chol` value from each candidate. DoWhy's `gcm.interventional_samples()` propagates the cholesterol intervention through the DAG; `trestbps`, `cp`, `exang`, `oldpeak`, `thalach`, `slope`, and `restecg` are interpreted as downstream SCM effects. A fixed random seed derived from patient features ensures deterministic results per patient-CF pair.
 
 **Categorical columns** (`target`, `exang`, `fbs`, `cp`, `restecg`, `slope`) are cast to `category` dtype before model fitting, matching the notebook setup.
 
 ## Results (100 iterations, 48 patients, 95% algorithmic-stability intervals)
 
-**Successful SCM-validated CFs per iteration:** 83.3 (95% algorithmic-stability interval: [72.0, 98.0])
+**Successful SCM-validated CFs per iteration:** 79.9 (95% algorithmic-stability interval: [64.0, 100.0])
 
-**Target flip rate:** 35.1% (95% algorithmic-stability interval: [31.0%, 41.1%])
+**Target flip rate:** 34.7% (95% algorithmic-stability interval: [28.9%, 43.0%])
 
-**Target-flip robustness index:** 3.09 (interval: [2.22, 3.89]). Computed by plugging the single-arm flip-rate odds into the VanderWeele-Ding E-value formula; reported as a derivative robustness summary specific to this pipeline, *not* the published two-arm E-value and not proof of causal identification or clinical effectiveness.
+**Target-flip robustness index:** 3.18 (interval: [1.98, 4.36]). Computed by plugging the single-arm flip-rate odds into the VanderWeele-Ding E-value formula; reported as a derivative robustness summary specific to this pipeline, *not* the published two-arm E-value and not proof of causal identification or clinical effectiveness.
 
 | Metric | Improve (%) | Worsen (%) | No Change (%) | Mode Before/After | Mean Change | 95% Algorithmic-Stability Interval (Improve %) |
 |--------|-------------|------------|---------------|-------------------|-------------|---------------------|
-| Resting BP (trestbps) | 52.5 | 45.7 | 1.8 | -- | -2.86 mmHg | [42.6%, 65.8%] |
-| Chest Pain (cp) | 68.2 | 4.6 | 27.2 | 4 to 3 | -- | [58.9%, 79.1%] |
-| Exercise Angina (exang) | 81.7 | 0.0 | 18.3 | 1 to 0 | -- | [76.2%, 86.8%] |
-| ST Depression (oldpeak) | 78.5 | 21.5 | 0.0 | -- | -1.15 mm | [73.4%, 83.1%] |
-| Max Heart Rate (thalach) | 79.3 | 20.4 | 0.2 | -- | +22.74 bpm | [72.3%, 84.8%] |
-| ST Slope (slope) | 92.9 | 0.0 | 7.1 | 2 to 1 | -- | [89.2%, 95.0%] |
-| Resting ECG (restecg) | 54.9 | 0.0 | 45.1 | 0 to 0 | -- | [47.4%, 60.6%] |
+| Resting BP (trestbps) | 51.6 | 46.7 | 1.7 | -- | -2.70 mmHg | [40.3%, 67.0%] |
+| Chest Pain (cp) | 88.9 | 4.2 | 6.9 | 4 to 3 | -- | [81.5%, 94.7%] |
+| Exercise Angina (exang) | 83.0 | 0.0 | 17.0 | 1 to 0 | -- | [76.2%, 89.0%] |
+| ST Depression (oldpeak) | 80.4 | 19.6 | 0.0 | -- | -1.18 mm | [73.9%, 86.7%] |
+| Max Heart Rate (thalach) | 78.6 | 21.0 | 0.4 | -- | +22.47 bpm | [71.0%, 83.8%] |
+| ST Slope (slope) | 92.2 | 0.1 | 7.8 | 2 to 1 | -- | [89.1%, 94.5%] |
+| Resting ECG (restecg) | 55.3 | 0.0 | 44.7 | 0 to 0 | -- | [46.3%, 63.6%] |
 
 Intervals in this table are percentile intervals across 100 independent DiCE-generation runs. They quantify algorithmic stability under repeated stochastic counterfactual generation and should not be interpreted as patient-level inferential confidence intervals.
 
-Observed change ranges across all 8,326 successful SCM-validated rows:
+Observed change ranges across all 7,992 successful SCM-validated rows:
 
 | Variable | Signed Change Range | Absolute Change Range | Mean Signed Change |
 |----------|---------------------|-----------------------|--------------------|
-| `chol` | -191 to +35 mg/dL | 0 to 191 mg/dL | -57.41 mg/dL |
-| `trestbps` | -37 to +32 mmHg | 0 to 37 mmHg | -2.93 mmHg |
-| `cp` | -1 to +3 category levels | 0 to 3 levels | -0.58 |
-| `exang` | -1 to 0 | 0 to 1 | -0.82 |
-| `oldpeak` | -5.60 to +0.87 mm | 0 to 5.60 mm | -1.15 mm |
-| `thalach` | -32 to +70 bpm | 0 to 70 bpm | +22.66 bpm |
-| `slope` | -2 to 0 category levels | 0 to 2 levels | -1.04 |
+| `chol` | -191 to +34 mg/dL | 0 to 191 mg/dL | -56.81 mg/dL |
+| `trestbps` | -36 to +32 mmHg | 0 to 36 mmHg | -2.79 mmHg |
+| `cp` | -1 to +3 category levels | 0 to 3 levels | -0.80 |
+| `exang` | -1 to 0 | 0 to 1 | -0.83 |
+| `oldpeak` | -5.60 to +0.87 mm | 0 to 5.60 mm | -1.18 mm |
+| `thalach` | -34 to +71 bpm | 0 to 71 bpm | +22.40 bpm |
+| `slope` | -2 to +1 category levels | 0 to 2 levels | -1.03 |
 | `restecg` | -2 to 0 category levels | 0 to 2 levels | -0.80 |
 
-No `exang`, `slope`, or `restecg` worsening occurred in the corrected run; the zero-worsening rows reflect the observed true-positive cohort and fitted SCM response under cholesterol-only intervention.
+`exang` and `restecg` show zero worsening across all successful rows; `slope` worsens in only 0.1% of iteration aggregates (a single +1 step). These reflect the observed true-positive cohort and fitted SCM response under cholesterol-only intervention.
 
 ## Sensitivity Analysis
 
