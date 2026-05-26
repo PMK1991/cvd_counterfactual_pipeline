@@ -18,12 +18,10 @@ if _PROJECT_ROOT not in sys.path:
 
 import copy
 import pandas as pd
-import numpy as np
 import dice_ml
 from dice_ml import Data, Model, Dice
 import threading
 import queue
-import os
 import pickle
 from typing import List, Dict, Optional, Tuple
 import logging

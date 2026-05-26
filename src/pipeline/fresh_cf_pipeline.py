@@ -19,14 +19,12 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 import pandas as pd
-import numpy as np
-from typing import List, Dict, Optional
+from typing import Dict, Optional
 import logging
 import json
 import pickle
 import shutil
 import time
-from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
 import argparse
@@ -165,7 +163,11 @@ class FreshCFPipeline:
             MODEL_RANDOM_STATE,
             MODEL_TEST_SIZE,
         )
-        assert MODEL_TEST_SIZE == 0.2 and MODEL_RANDOM_STATE == 42
+        if MODEL_TEST_SIZE != 0.2 or MODEL_RANDOM_STATE != 42:
+            raise RuntimeError(
+                f"Pipeline cohort depends on train_model.py's split "
+                f"(test_size=0.2, random_state=42); got {MODEL_TEST_SIZE=}, {MODEL_RANDOM_STATE=}"
+            )
 
         loader = DataLoader(self.config['dice']['data_path'])
         high_risk = loader.test_set_high_risk(
@@ -201,13 +203,6 @@ class FreshCFPipeline:
         output_file = out_dir / "successful_counterfactuals.csv"
         successful_cfs.to_csv(output_file, index=False)
         return str(output_file)
-
-    def _count_raw_cf_pairs(self, iteration_dir: Path) -> int:
-        """Count generated CF files for an iteration (used for flip-rate denom)."""
-        cf_dir = iteration_dir / "counterfactuals"
-        if not cf_dir.exists():
-            return 0
-        return sum(1 for _ in cf_dir.glob("patient_*_cf_*.csv"))
 
     def run_single_iteration(self, iteration_num: int, patients_df: pd.DataFrame) -> Dict:
         """
@@ -256,7 +251,7 @@ class FreshCFPipeline:
                 )
                 cf_results.append(result)
 
-            total_generated_cfs = self._count_raw_cf_pairs(iteration_dir)
+            total_generated_cfs = sum(r['n_cfs_generated'] for r in cf_results)
             total_requested_cfs = len(patients_df) * self.config['dice']['total_cfs']
 
             # Step 2: SCM validation
@@ -464,8 +459,6 @@ def load_yaml_config(config_path: str = "pipeline_config.yaml") -> Dict:
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(description='Fresh CF Generation Pipeline')
-    # Defaults are None so the YAML config is honoured when the flag isn't
-    # passed; test_mode still forces fixed small values regardless.
     parser.add_argument('--n_iterations', type=int, default=None, help='Number of iterations (overrides YAML)')
     parser.add_argument('--n_patients', type=int, default=None, help='Patient cap (used only in --test_mode)')
     parser.add_argument('--n_workers', type=int, default=None, help='Number of concurrent workers (overrides YAML)')
@@ -481,8 +474,6 @@ def main():
 
     args = parser.parse_args()
 
-    # Create config from defaults + YAML + CLI overrides. Only assign CLI
-    # values when the user explicitly passed the flag; otherwise YAML wins.
     config = FreshCFPipeline._default_config()
     _deep_update(config, load_yaml_config())
     if args.test_mode:
@@ -515,8 +506,6 @@ def main():
         )
         analyzer.run_sensitivity_analysis(parameters=args.sensitivity_params)
     elif args.bootstrap_only:
-        # Skip the pipeline run and bootstrap directly from the cached
-        # successful CFs already on disk under output.base_dir.
         from src.pipeline.patient_bootstrap import PatientBootstrap
         output_dir = Path(config['output']['base_dir'])
         bootstrap = PatientBootstrap(

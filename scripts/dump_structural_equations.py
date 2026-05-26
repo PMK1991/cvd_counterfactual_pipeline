@@ -21,8 +21,15 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 import numpy as np
-import yaml
+from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.linear_model import LinearRegression
+from sklearn.pipeline import Pipeline
 
+from src.pipeline.fresh_cf_pipeline import (
+    FreshCFPipeline,
+    _deep_update,
+    load_yaml_config,
+)
 from src.pipeline.scm_analyzer import SCMAnalyzer
 
 
@@ -40,59 +47,72 @@ def _rewrite_feature_names(feature_names, parents):
     return out
 
 
+def _fit_from_pipeline(sk, parents):
+    info: dict = {
+        "estimator": "Pipeline",
+        "pipeline_steps": [name for name, _ in sk.steps],
+        "final_estimator": type(sk.steps[-1][1]).__name__,
+    }
+    final = sk.steps[-1][1]
+    if not hasattr(final, "coef_"):
+        return info
+    try:
+        feature_names = sk[:-1].get_feature_names_out().tolist()
+    except Exception:
+        feature_names = None
+    feature_names = _rewrite_feature_names(feature_names, parents)
+    coefs = np.atleast_1d(final.coef_).ravel().tolist()
+    if feature_names and len(feature_names) == len(coefs):
+        info["feature_names"] = feature_names
+        info["coefficients"] = dict(zip(feature_names, coefs))
+    else:
+        info["coefficients"] = coefs
+    if hasattr(final, "intercept_"):
+        info["intercept"] = float(np.atleast_1d(final.intercept_)[0])
+    return info
+
+
+def _fit_from_linear(sk, parents):
+    info: dict = {"estimator": "LinearRegression"}
+    coefs = np.atleast_1d(sk.coef_).ravel().tolist()
+    feature_names = None
+    if hasattr(sk, "feature_names_in_"):
+        feature_names = sk.feature_names_in_.tolist()
+    if not feature_names and parents and len(parents) == len(coefs):
+        feature_names = list(parents)
+    if feature_names and len(feature_names) == len(coefs):
+        info["coefficients"] = dict(zip(feature_names, coefs))
+    else:
+        info["coefficients"] = coefs
+    if hasattr(sk, "intercept_"):
+        info["intercept"] = float(np.atleast_1d(sk.intercept_)[0])
+    return info
+
+
+def _fit_from_hgbr(sk, parents):
+    return {
+        "estimator": "HistGradientBoostingRegressor",
+        "max_iter": getattr(sk, "max_iter", None),
+        "learning_rate": getattr(sk, "learning_rate", None),
+    }
+
+
+_FIT_EXTRACTORS = [
+    (Pipeline, _fit_from_pipeline),
+    (LinearRegression, _fit_from_linear),
+    (HistGradientBoostingRegressor, _fit_from_hgbr),
+]
+
+
 def _extract_fit(mechanism, parents=None):
-    """Return a JSON-serialisable summary of the prediction model."""
     pred = getattr(mechanism, "prediction_model", None)
     if pred is None:
         return None
     sk = getattr(pred, "sklearn_model", pred)
-    name = type(sk).__name__
-
-    info: dict = {"estimator": name}
-
-    # Pipeline → look at final step
-    if name == "Pipeline":
-        steps = [s[0] for s in sk.steps]
-        info["pipeline_steps"] = steps
-        final = sk.steps[-1][1]
-        info["final_estimator"] = type(final).__name__
-        if hasattr(final, "coef_"):
-            try:
-                feature_names = sk[:-1].get_feature_names_out().tolist()
-            except Exception:
-                feature_names = None
-            feature_names = _rewrite_feature_names(feature_names, parents)
-            coefs = np.atleast_1d(final.coef_).ravel().tolist()
-            if feature_names and len(feature_names) == len(coefs):
-                info["feature_names"] = feature_names
-                info["coefficients"] = dict(zip(feature_names, coefs))
-            else:
-                info["coefficients"] = coefs
-            if hasattr(final, "intercept_"):
-                info["intercept"] = float(np.atleast_1d(final.intercept_)[0])
-        return info
-
-    if name == "LinearRegression":
-        coefs = np.atleast_1d(sk.coef_).ravel().tolist()
-        feature_names = None
-        if hasattr(sk, "feature_names_in_"):
-            feature_names = sk.feature_names_in_.tolist()
-        if not feature_names and parents and len(parents) == len(coefs):
-            feature_names = list(parents)
-        if feature_names and len(feature_names) == len(coefs):
-            info["coefficients"] = dict(zip(feature_names, coefs))
-        else:
-            info["coefficients"] = coefs
-        if hasattr(sk, "intercept_"):
-            info["intercept"] = float(np.atleast_1d(sk.intercept_)[0])
-        return info
-
-    if name == "HistGradientBoostingRegressor":
-        info["max_iter"] = getattr(sk, "max_iter", None)
-        info["learning_rate"] = getattr(sk, "learning_rate", None)
-        return info
-
-    return info
+    for cls, extractor in _FIT_EXTRACTORS:
+        if isinstance(sk, cls):
+            return extractor(sk, parents)
+    return {"estimator": type(sk).__name__}
 
 
 def _extract_noise_summary(mechanism):
@@ -119,19 +139,26 @@ def dump_mechanisms(causal_model):
     for node in graph.nodes:
         parents = list(graph.predecessors(node))
         mech = causal_model.causal_mechanism(node)
-        mech_type = type(mech).__name__
-        entry = {"node": node, "parents": parents, "mechanism": mech_type}
-        if not parents:
-            # Root node: only a stochastic model
-            continue_summary = type(mech).__name__
-            entry["mechanism"] = continue_summary
-        else:
+        entry = {"node": node, "parents": parents, "mechanism": type(mech).__name__}
+        if parents:
             entry["fit"] = _extract_fit(mech, parents)
             noise_model = getattr(mech, "noise_model", None)
             entry["noise_model"] = type(noise_model).__name__ if noise_model else None
             entry["noise_summary"] = _extract_noise_summary(mech)
         rows.append(entry)
     return rows
+
+
+def _symptom_link_sentence(graph_variant):
+    edges = SCMAnalyzer.GRAPH_VARIANTS.get(graph_variant, [])
+    symptom_links = [(u, v) for (u, v) in SCMAnalyzer._SYMPTOM_CROSSLINKS if (u, v) in edges]
+    if not symptom_links:
+        return (
+            "Symptom-to-symptom cross-links (`thalach → exang`, `exang → cp`) are excluded, "
+            "so symptoms depend on each other only through `target`."
+        )
+    rendered = ", ".join(f"`{u} → {v}`" for u, v in symptom_links)
+    return f"Symptom-to-symptom cross-links included in this variant: {rendered}."
 
 
 def render_markdown(rows, graph_variant):
@@ -148,9 +175,7 @@ def render_markdown(rows, graph_variant):
     lines.append("")
     lines.append(
         "Graph: core 3 layers (`risk-factors → target → symptoms`) + "
-        "risk-factor cross-links. Symptom-to-symptom cross-links "
-        "(`thalach → exang`, `exang → cp`) are excluded so that symptoms "
-        "depend on each other only through `target`."
+        "risk-factor cross-links. " + _symptom_link_sentence(graph_variant)
     )
     lines.append("")
 
@@ -191,7 +216,7 @@ def render_markdown(rows, graph_variant):
                 coef_terms = " ".join(
                     f"{v:+.4f}·{name}" for name, v in fit["coefficients"].items()
                 )
-                lines.append(f"Estimator: `LinearRegression`.")
+                lines.append("Estimator: `LinearRegression`.")
                 lines.append("```")
                 lines.append(f"{r['node']} ≈ {intercept:+.4f} {coef_terms} + ε")
                 lines.append("```")
@@ -267,10 +292,9 @@ def main():
     )
     args = parser.parse_args()
 
-    with open(args.config) as f:
-        cfg = yaml.safe_load(f)
-
-    scm_cfg = dict(cfg.get("scm", {}))
+    cfg = FreshCFPipeline._default_config()
+    _deep_update(cfg, load_yaml_config(args.config))
+    scm_cfg = dict(cfg["scm"])
     scm_cfg.setdefault("train_data_path", cfg["dice"]["data_path"])
     graph_variant = scm_cfg.get("graph_structure", "full")
 

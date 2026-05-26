@@ -48,14 +48,9 @@ class SCMAnalyzer:
         }
 
     # ------------------------------------------------------------------
-    # Causal model construction
-    # ------------------------------------------------------------------
-
-    # ------------------------------------------------------------------
     # Graph structure variants
     # ------------------------------------------------------------------
 
-    # Core 3-layer edges (always present)
     _CORE_EDGES = [
         # Risk Factors → Disease
         ('age', 'target'),
@@ -82,18 +77,13 @@ class SCMAnalyzer:
         ('chol', 'trestbps'),   # dyslipidemia raises BP
     ]
 
-    # Symptom-to-symptom cross-links (downstream of target). These bypass the
-    # disease node and violate the conditional-independence assumption that
-    # symptoms depend on each other only through `target`, so they are now
-    # excluded from the default `full` variant. Kept here so the legacy
-    # `full_with_symptom_links` variant can reproduce earlier runs.
+    # Symptom-to-symptom edges; bypass the disease node and violate
+    # conditional independence of symptoms given target. Only included in
+    # `full_with_symptom_links`.
     _SYMPTOM_CROSSLINKS = [
-        ('thalach', 'exang'),   # high HR triggers exercise angina
-        ('exang', 'cp'),        # exercise angina manifests as chest pain
+        ('thalach', 'exang'),
+        ('exang', 'cp'),
     ]
-
-    # Backwards-compatible alias preserved for any external importers.
-    _CROSS_LAYER_EDGES = _RISK_FACTOR_CROSSLINKS + _SYMPTOM_CROSSLINKS
 
     # Extended edges: additional physiologically plausible relationships
     _EXTENDED_EDGES = [
