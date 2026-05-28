@@ -1,0 +1,183 @@
+{
+  "old_hyperparameter_space": {
+    "classifier__max_depth": [
+      3
+    ],
+    "classifier__learning_rate": [
+      0.01
+    ],
+    "classifier__n_estimators": [
+      300
+    ],
+    "classifier__subsample": [
+      0.8
+    ],
+    "classifier__colsample_bytree": [
+      1.0
+    ]
+  },
+  "new_xgb_hyperparameter_space": {
+    "classifier__max_depth": [
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "classifier__learning_rate": [
+      0.005,
+      0.01,
+      0.02,
+      0.03,
+      0.05,
+      0.1
+    ],
+    "classifier__n_estimators": [
+      100,
+      200,
+      300,
+      500,
+      800
+    ],
+    "classifier__subsample": [
+      0.6,
+      0.8,
+      1.0
+    ],
+    "classifier__colsample_bytree": [
+      0.6,
+      0.8,
+      1.0
+    ],
+    "classifier__min_child_weight": [
+      1,
+      3,
+      5,
+      7
+    ],
+    "classifier__gamma": [
+      0,
+      0.1,
+      0.25,
+      0.5,
+      1.0
+    ],
+    "classifier__reg_alpha": [
+      0,
+      0.001,
+      0.01,
+      0.1
+    ],
+    "classifier__reg_lambda": [
+      0.5,
+      1.0,
+      2.0,
+      5.0
+    ],
+    "classifier__scale_pos_weight": [
+      0.75,
+      1.0,
+      1.25,
+      1.5
+    ]
+  },
+  "baseline_xgb": {
+    "train": {
+      "accuracy": 0.8973451327433628,
+      "precision": 0.8839590443686007,
+      "recall": 0.9151943462897526,
+      "f1": 0.8993055555555556,
+      "roc_auc": 0.96113074204947,
+      "sensitivity": 0.9151943462897526,
+      "specificity": 0.8794326241134752,
+      "confusion_matrix": [
+        [
+          248,
+          34
+        ],
+        [
+          24,
+          259
+        ]
+      ]
+    },
+    "test": {
+      "accuracy": 0.9154929577464789,
+      "precision": 0.8571428571428571,
+      "recall": 0.9230769230769231,
+      "f1": 0.888888888888889,
+      "roc_auc": 0.9745726495726496,
+      "sensitivity": 0.9230769230769231,
+      "specificity": 0.9111111111111111,
+      "confusion_matrix": [
+        [
+          82,
+          8
+        ],
+        [
+          4,
+          48
+        ]
+      ]
+    },
+    "balanced_accuracy_test": 0.9170940170940172
+  },
+  "tuned_xgb": {
+    "best_cv_balanced_accuracy": 0.8690162907268171,
+    "best_params": {
+      "classifier__subsample": 0.6,
+      "classifier__scale_pos_weight": 1.0,
+      "classifier__reg_lambda": 2.0,
+      "classifier__reg_alpha": 0.01,
+      "classifier__n_estimators": 200,
+      "classifier__min_child_weight": 5,
+      "classifier__max_depth": 4,
+      "classifier__learning_rate": 0.05,
+      "classifier__gamma": 0.5,
+      "classifier__colsample_bytree": 0.6
+    },
+    "train": {
+      "accuracy": 0.9097345132743363,
+      "precision": 0.8918918918918919,
+      "recall": 0.9328621908127208,
+      "f1": 0.9119170984455959,
+      "roc_auc": 0.9652407087186426,
+      "sensitivity": 0.9328621908127208,
+      "specificity": 0.8865248226950354,
+      "confusion_matrix": [
+        [
+          250,
+          32
+        ],
+        [
+          19,
+          264
+        ]
+      ]
+    },
+    "test": {
+      "accuracy": 0.9154929577464789,
+      "precision": 0.8571428571428571,
+      "recall": 0.9230769230769231,
+      "f1": 0.888888888888889,
+      "roc_auc": 0.9675213675213675,
+      "sensitivity": 0.9230769230769231,
+      "specificity": 0.9111111111111111,
+      "confusion_matrix": [
+        [
+          82,
+          8
+        ],
+        [
+          4,
+          48
+        ]
+      ]
+    },
+    "balanced_accuracy_test": 0.9170940170940172
+  },
+  "tabpfn": {
+    "status": "failed",
+    "reason": "[WinError 10038] An operation was attempted on something that is not a socket"
+  }
+}

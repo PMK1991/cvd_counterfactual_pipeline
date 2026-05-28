@@ -3,22 +3,36 @@
 
 pipeline:
   n_iterations: 100  # Number of times to generate fresh CFs
-  n_patients: 48     # Number of high-risk patients to analyze
+  n_patients: 48     # Debug cap used only in test mode; full mode uses test-set true-positive cohort
   n_workers: 4       # Number of concurrent workers (adjust based on CPU cores)
   test_mode: false   # Set to true for quick testing (5 patients, 5 iterations)
+  run_patient_bootstrap: false
+  bootstrap_iterations: 1000
 
 dice:
   model_path: "model/xgb_pipeline.pkl"
   data_path: "data/heart_statlog_cleveland_hungary_final.csv"
   method: "genetic"
   total_cfs: 5
+  features_to_vary: null
+  search_params:
+    maxiterations: 500
+    thresh: 0.01
+    proximity_weight: 0.5
+    sparsity_weight: 1.0
+    diversity_weight: 5.0
+    stopping_threshold: 0.5
+    posthoc_sparsity_algorithm: "binary"
+    posthoc_sparsity_param: 0.1
   permitted_range:
     trestbps: [100, 120]
-    chol: [150, null]  # null means use 90% of original value
-  timeout: 30  # Timeout in seconds for CF generation
+    chol: [150, 200]
+  timeout: 45  # Timeout in seconds for bounded genetic CF search
 
 scm:
-  n_samples: 1  # Single sample with fixed seed per patient-CF pair for reproducibility
+  n_samples: 1000  # SCM Monte Carlo samples per intervention
+  graph_structure: "full"
+  intervention_targets: "chol_only"
 
 output:
   base_dir: "fresh_cf_iterations"
@@ -35,3 +49,4 @@ sensitivity:
     trestbps_range: [[90, 110], [100, 120], [110, 130], [120, 140]]
     chol_lower: [100, 150, 200]
     confidence_level: [0.90, 0.95, 0.99]  # Post-hoc recomputation only
+    graph_structure: ["minimal", "full", "extended"]

@@ -41,21 +41,16 @@ class SCMAnalyzer:
     def _default_config(self) -> Dict:
         """Default SCM configuration"""
         return {
-            'n_samples': 1,
+            'n_samples': 1000,
             'train_data_path': 'data/heart_statlog_cleveland_hungary_final.csv',
             'graph_structure': 'full',          # 'minimal', 'full', or 'extended'
             'intervention_targets': 'both',     # 'both', 'chol_only', or 'trestbps_only'
         }
 
     # ------------------------------------------------------------------
-    # Causal model construction
-    # ------------------------------------------------------------------
-
-    # ------------------------------------------------------------------
     # Graph structure variants
     # ------------------------------------------------------------------
 
-    # Core 3-layer edges (always present)
     _CORE_EDGES = [
         # Risk Factors → Disease
         ('age', 'target'),
@@ -73,15 +68,21 @@ class SCMAnalyzer:
         ('target', 'oldpeak'),
     ]
 
-    # Cross-layer domain-knowledge edges from nb_cvd_scm.ipynb
-    _CROSS_LAYER_EDGES = [
+    # Cross-layer risk-factor edges from nb_cvd_scm.ipynb (upstream of target)
+    _RISK_FACTOR_CROSSLINKS = [
         ('age', 'chol'),        # age affects lipid levels
         ('age', 'trestbps'),    # age affects blood pressure
         ('sex', 'trestbps'),    # sex-based BP differences
         ('sex', 'chol'),        # sex-based lipid differences
         ('chol', 'trestbps'),   # dyslipidemia raises BP
-        ('thalach', 'exang'),   # high HR triggers exercise angina
-        ('exang', 'cp'),        # exercise angina manifests as chest pain
+    ]
+
+    # Symptom-to-symptom edges; bypass the disease node and violate
+    # conditional independence of symptoms given target. Only included in
+    # `full_with_symptom_links`.
+    _SYMPTOM_CROSSLINKS = [
+        ('thalach', 'exang'),
+        ('exang', 'cp'),
     ]
 
     # Extended edges: additional physiologically plausible relationships
@@ -93,8 +94,9 @@ class SCMAnalyzer:
 
     GRAPH_VARIANTS = {
         'minimal': _CORE_EDGES,
-        'full': _CORE_EDGES + _CROSS_LAYER_EDGES,
-        'extended': _CORE_EDGES + _CROSS_LAYER_EDGES + _EXTENDED_EDGES,
+        'full': _CORE_EDGES + _RISK_FACTOR_CROSSLINKS,
+        'full_with_symptom_links': _CORE_EDGES + _RISK_FACTOR_CROSSLINKS + _SYMPTOM_CROSSLINKS,
+        'extended': _CORE_EDGES + _RISK_FACTOR_CROSSLINKS + _EXTENDED_EDGES,
     }
 
     def _build_causal_model(self) -> gcm.InvertibleStructuralCausalModel:
