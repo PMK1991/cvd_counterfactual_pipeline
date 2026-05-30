@@ -2,18 +2,21 @@
 """
 SCM Analyzer Module
 
-This module handles SCM-based counterfactual validation using DoWhy.
-Builds a causal graph for CVD, fits a probabilistic causal model,
-and validates DiCE-generated counterfactuals via interventional sampling.
+This module validates DiCE-generated counterfactuals using a pre-fitted
+DoWhy structural causal model. The SCM is fitted OFFLINE by
+``src/training/train_scm.py`` and serialized to ``model/scm_<variant>.pkl``;
+this module only LOADS the matching artifact at inference and runs
+interventional sampling. There is no in-process fitting fallback — if no
+matching artifact is present, initialization raises.
 
 Author: PMK
 Date: 2026-01-26
 """
 
 import warnings
+import pickle
 import pandas as pd
 import numpy as np
-import networkx as nx
 from pathlib import Path
 from typing import List, Dict, Optional
 import logging
@@ -22,6 +25,10 @@ from dowhy import gcm
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Repo root (…/src/pipeline/scm_analyzer.py -> parents[2]) so a relative
+# model_dir resolves regardless of the worker's current working directory.
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 class SCMAnalyzer:
@@ -35,16 +42,35 @@ class SCMAnalyzer:
     def __init__(self, config: Optional[Dict] = None):
         self.config = config or self._default_config()
         self.causal_model = None
+        self._warn_on_deprecated_config()
 
         logger.info("Initialized SCMAnalyzer")
+
+    # Config keys that drove the removed in-process fitting fallback.
+    _DEPRECATED_CONFIG_KEYS = (
+        'train_data_path',
+        'use_pretrained_scm',
+        'require_pretrained_scm',
+    )
+
+    def _warn_on_deprecated_config(self) -> None:
+        """Warn if a config still sets keys from the removed in-process-fit path."""
+        present = [k for k in self._DEPRECATED_CONFIG_KEYS if k in self.config]
+        if present:
+            logger.warning(
+                "Ignoring deprecated SCM config key(s) %s: the SCM is now fitted "
+                "offline by train_scm.py and only loaded at inference.",
+                ", ".join(present),
+            )
 
     def _default_config(self) -> Dict:
         """Default SCM configuration"""
         return {
             'n_samples': 1000,
-            'train_data_path': 'data/heart_statlog_cleveland_hungary_final.csv',
-            'graph_structure': 'full',          # 'minimal', 'full', or 'extended'
+            'graph_structure': 'full',          # 'minimal', 'full', 'full_with_symptom_links', 'extended'
             'intervention_targets': 'both',     # 'both', 'chol_only', or 'trestbps_only'
+            'fit_seed': 42,                     # Must match the artifact built by train_scm.py --fit-seed
+            'model_dir': 'model',               # Where train_scm.py writes scm_<variant>.pkl
         }
 
     # ------------------------------------------------------------------
@@ -99,71 +125,122 @@ class SCMAnalyzer:
         'extended': _CORE_EDGES + _RISK_FACTOR_CROSSLINKS + _EXTENDED_EDGES,
     }
 
-    def _build_causal_model(self) -> gcm.InvertibleStructuralCausalModel:
+    # ------------------------------------------------------------------
+    # Pre-fitted artifact loading (serialization refactor)
+    # ------------------------------------------------------------------
+
+    def _artifact_path(self) -> Path:
+        """Resolve model/scm_<graph_structure>.pkl, relative to repo root."""
+        variant = self.config.get('graph_structure', 'full')
+        model_dir = Path(self.config.get('model_dir', 'model'))
+        if not model_dir.is_absolute():
+            model_dir = _PROJECT_ROOT / model_dir
+        return model_dir / f"scm_{variant}.pkl"
+
+    def _load_pretrained(self) -> gcm.InvertibleStructuralCausalModel:
+        """Load the pre-fitted SCM artifact produced by ``src/training/train_scm.py``.
+
+        The SCM is fitted OFFLINE (train_scm.py) and only loaded here at
+        inference, so the validator is never re-fit per worker or per run. The
+        artifact is accepted only if its ``graph_structure`` and ``fit_seed``
+        match this config and its graph edges match the requested variant;
+        provenance (``fit_data``, ``n_rows``, hash) is logged. Any problem —
+        missing file, unpicklable artifact, or metadata/graph mismatch — raises
+        with a clear message. There is no in-process fallback fit.
         """
-        Build, auto-assign mechanisms, and fit a DoWhy invertible
-        structural causal model for the CVD dataset.
+        variant = self.config.get('graph_structure', 'full')
+        hint = "Run: python src/training/train_scm.py --all"
 
-        Graph structure is selected via config['graph_structure']:
-          'minimal'  — Core 3-layer only (Risk Factors → target → Symptoms)
-          'full'     — Core + cross-layer edges from nb_cvd_scm.ipynb (default)
-          'extended' — Full + additional physiological edges
+        if variant not in self.GRAPH_VARIANTS:
+            raise ValueError(
+                f"Unknown graph_structure '{variant}'. "
+                f"Known variants: {sorted(self.GRAPH_VARIANTS)}."
+            )
 
-        Core 3-layer structure from nb_cvd_scm.ipynb:
-          Layer 1 — Risk Factors (root nodes): age, sex, chol, fbs, trestbps
-          Layer 2 — Disease: target
-          Layer 3 — Symptoms: cp, restecg, thalach, exang, slope, oldpeak
-        """
-        graph_name = self.config.get('graph_structure', 'full')
-        edges = self.GRAPH_VARIANTS.get(graph_name)
-        if edges is None:
-            logger.warning(f"Unknown graph_structure '{graph_name}', falling back to 'full'")
-            edges = self.GRAPH_VARIANTS['full']
+        path = self._artifact_path()
+        if not path.exists():
+            raise FileNotFoundError(f"No pre-fitted SCM at {path}. {hint}")
 
-        logger.info(f"Building causal graph for CVD (variant: {graph_name}, {len(edges)} edges) …")
+        try:
+            with open(path, 'rb') as f:
+                artifact = pickle.load(f)
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to unpickle SCM artifact {path} ({e}). Pickle is "
+                f"version-sensitive — regenerate it. {hint}"
+            ) from e
 
-        causal_graph = nx.DiGraph(edges)
+        if not isinstance(artifact, dict):
+            raise ValueError(
+                f"SCM artifact {path} is not a dict (got {type(artifact).__name__}). {hint}"
+            )
 
-        causal_model = gcm.InvertibleStructuralCausalModel(causal_graph)
+        cfg_seed = self.config.get('fit_seed', 42)
+        art_variant = artifact.get('graph_structure')
+        art_seed = artifact.get('fit_seed')
+        if art_variant != variant:
+            raise ValueError(
+                f"SCM artifact {path} graph_structure '{art_variant}' "
+                f"!= config '{variant}'. {hint}"
+            )
+        if art_seed != cfg_seed:
+            raise ValueError(
+                f"SCM artifact {path} fit_seed {art_seed} != config {cfg_seed}. {hint}"
+            )
 
-        # Load training data
-        train_path = self.config.get(
-            'train_data_path', 'data/heart_statlog_cleveland_hungary_final.csv'
+        model = artifact.get('causal_model')
+        if model is None or not hasattr(model, 'graph'):
+            raise ValueError(
+                f"SCM artifact {path} has no usable 'causal_model'. {hint}"
+            )
+
+        expected_edges = set(self.GRAPH_VARIANTS[variant])
+        if set(model.graph.edges) != expected_edges:
+            raise ValueError(
+                f"SCM artifact {path} graph edges do not match variant "
+                f"'{variant}'. The artifact is stale — {hint}"
+            )
+
+        self._warn_on_version_skew(artifact.get('versions', {}))
+        logger.info(
+            "Loaded pre-fitted SCM from %s (variant=%s, fit_data=%s, n_rows=%s, "
+            "fit_seed=%s, data_sha256_16=%s).",
+            path, art_variant, artifact.get('fit_data'), artifact.get('n_rows'),
+            art_seed, artifact.get('data_sha256_16'),
         )
-        logger.info(f"Loading training data from {train_path} …")
-        train_data = pd.read_csv(train_path)
+        return model
 
-        # Keep only the columns present in the graph
-        graph_nodes = list(causal_graph.nodes)
-        train_data = train_data[graph_nodes]
-
-        # Cast categorical columns to category dtype (matching nb_cvd_scm.ipynb)
-        for col in ['target', 'exang', 'fbs', 'cp', 'restecg', 'slope']:
-            train_data[col] = train_data[col].astype('category')
-
-        # Auto-assign and fit
-        logger.info("Auto-assigning causal mechanisms …")
-        gcm.auto.assign_causal_mechanisms(causal_model, train_data)
-
-        logger.info("Fitting causal model …")
-        gcm.fit(causal_model, train_data)
-
-        logger.info("Causal model built and fitted successfully")
-        return causal_model
+    @staticmethod
+    def _warn_on_version_skew(art_versions: Dict) -> None:
+        """Warn if the artifact's dowhy/sklearn major.minor differs from current."""
+        try:
+            import sklearn
+            import dowhy
+            current = {'dowhy': dowhy.__version__, 'sklearn': sklearn.__version__}
+        except Exception:  # pragma: no cover
+            return
+        for pkg, cur in current.items():
+            old = art_versions.get(pkg)
+            if old and old.split('.')[:2] != cur.split('.')[:2]:
+                logger.warning(
+                    "SCM artifact was pickled under %s %s but %s is installed; "
+                    "behaviour may differ.", pkg, old, cur,
+                )
 
     # ------------------------------------------------------------------
     # Initialization
     # ------------------------------------------------------------------
 
     def initialize_analyzer(self) -> None:
-        """Build and fit the causal model (call once per worker)."""
-        try:
-            if self.causal_model is None:
-                self.causal_model = self._build_causal_model()
-            logger.info("SCMAnalyzer ready")
-        except Exception as e:
-            logger.error(f"Error initializing analyzer: {e}")
-            raise
+        """Load the pre-fitted SCM artifact (``train_scm.py`` output).
+
+        Called once per worker. The SCM is fitted OFFLINE by train_scm.py; this
+        only loads it. Raises if no matching artifact exists — there is no
+        in-process fit fallback.
+        """
+        if self.causal_model is None:
+            self.causal_model = self._load_pretrained()
+        logger.info("SCMAnalyzer ready")
 
     # ------------------------------------------------------------------
     # Intervention
@@ -233,7 +310,7 @@ class SCMAnalyzer:
             # DoWhy: observed_data and num_samples_to_draw are mutually exclusive.
             # To draw multiple samples, duplicate the observed row.
             if n_samples > 1:
-                obs_data = pd.concat([orig_row] * n_samples, ignore_index=True)
+                obs_data = orig_row.loc[orig_row.index.repeat(n_samples)].reset_index(drop=True)
             else:
                 obs_data = orig_row
 
@@ -261,7 +338,8 @@ class SCMAnalyzer:
                 agg = {}
                 for col in cf_samples.columns:
                     if col in ('target', 'exang', 'fbs', 'cp', 'restecg', 'slope'):
-                        agg[col] = cf_samples[col].mode().iloc[0]
+                        col_mode = cf_samples[col].mode()
+                        agg[col] = col_mode.iloc[0] if len(col_mode) else cf_samples[col].iloc[0]
                     else:
                         agg[col] = cf_samples[col].median()
                 cf_row = pd.DataFrame([agg])

@@ -232,14 +232,16 @@ fresh_cf_iterations/              # or fresh_cf_iterations_test/ in test mode
 │   ├── evalue.json               # Target-flip robustness index
 │   ├── cohort_counts.json        # Cohort accounting
 │   └── summary_report.md         # Human-readable summary
-├── fresh_cf_pipeline.log         # Detailed execution logs
-└── sensitivity_results/          # Sensitivity analysis output
-    ├── total_cfs/comparison.csv
-    ├── trestbps_range/comparison.csv
-    ├── chol_lower/comparison.csv
-    ├── confidence_level/comparison.csv
-    ├── all_sensitivity_results.csv
-    └── sensitivity_report.md
+└── fresh_cf_pipeline.log         # Detailed execution logs (written into the output dir)
+
+sensitivity_results/              # Top-level sensitivity analysis output
+├── total_cfs/comparison.csv
+├── trestbps_range/comparison.csv
+├── chol_lower/comparison.csv
+├── confidence_level/comparison.csv
+├── all_sensitivity_results.csv
+├── fresh_cf_pipeline.log
+└── sensitivity_report.md
 ```
 
 ## Important Notes
@@ -285,8 +287,9 @@ Edit `src/pipeline/dice_cf_generator.py`:
 - Modify `features_to_vary` to include/exclude features
 
 ### Changing Causal Model
-Edit `src/pipeline/scm_analyzer.py`:
-- Modify the 3-layer causal graph edges in `_build_causal_model()`
+The SCM is fitted **offline** by `src/training/train_scm.py` and only loaded at inference by `src/pipeline/scm_analyzer.py` (load-only, no in-process fitting fallback). To change the causal model:
+- Modify the graph edges in the `GRAPH_VARIANTS` / edge-list class constants (`_CORE_EDGES`, `_RISK_FACTOR_CROSSLINKS`, etc.) in `src/pipeline/scm_analyzer.py` (shared by `train_scm.py`)
+- **Re-run `python src/training/train_scm.py --all`** to regenerate `model/scm_<variant>.pkl`; otherwise the pipeline fails fast on the stale-artifact (graph-edge mismatch) check
 - Reference `notebooks/causal/nb_cvd_scm.ipynb` for the original graph definition
 - The model uses `gcm.InvertibleStructuralCausalModel` with categorical dtypes
 - Update intervention logic in `apply_scm_intervention()` if changing intervention targets
