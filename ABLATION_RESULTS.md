@@ -10,19 +10,31 @@ class 0 (low risk) for it. Everything upstream is held fixed.
 
 ## Design
 
-- **Same cohort, same CFs.** Both arms re-use the *identical* DiCE
+- **Same cohort, same candidate CFs.** Both arms re-use the *identical* DiCE
   counterfactuals from the leakage-free 100-iteration run (48 test-set
   true-positive high-risk patients, 238.3 CFs generated per iteration on
-  average). Only the **acceptance criterion** differs, so the comparison is
-  apples-to-apples.
+  average). Only the **acceptance criterion** differs.
 - **SCM arm (filtered):** accept a CF if DoWhy `gcm` interventional propagation
-  of the actionable edits (`chol`, `trestbps`) flips `target` 1 → 0. The
-  reported `cf_*` symptom values are the SCM's **causally-propagated** estimates.
+  of the actionable edits (`chol`, `trestbps`) flips `target` 1 → 0 **under the
+  fitted SCM**. The reported `cf_*` symptom values are the SCM's
+  **causally-propagated** estimates (and are physiologically clipped, e.g.
+  `slope` ∈ [1, 3], `oldpeak` ≥ 0).
 - **No-SCM arm (unfiltered):** accept a CF if the XGBoost model predicts
   `target = 0`. The reported `cf_*` values are **DiCE's raw proposals** (DiCE
-  varies all features freely).
+  varies all features freely, with no physiological clipping).
 - Both arms feed the same `MetricsCalculator` / `CIComputer`; 95% percentile
   CIs are over the 100 iterations.
+
+> **This is a candidate-filter ablation, not a regenerated no-SCM pipeline, and
+> the no-SCM arm is intentionally circular.** DiCE generated these candidates by
+> optimising against this *same* classifier, so direct model scoring is not an
+> independent validity check — it is the **model-only acceptance upper bound**
+> (the share of DiCE candidates that still score class 0 when reloaded and
+> re-predicted). The two arms therefore also report **different estimands**: SCM
+> `cf_*` are causal consequences of a 2-feature intervention, while no-SCM `cf_*`
+> are arbitrary model-facing edits across all features, measured over different
+> accepted subsets. The per-feature deltas below describe *what the accepted rows
+> contain*, not a like-for-like causal-recourse comparison.
 
 Reproduce with:
 
@@ -43,8 +55,9 @@ python scripts/run_unfiltered_ablation.py
 **The SCM filter is ~2× more conservative.** Removing it nearly doubles the
 acceptance rate (34.8% → 66.1%), because direct model scoring accepts *any*
 DiCE proposal the classifier happens to like — including causally implausible
-ones — whereas the SCM only keeps CFs whose causal propagation genuinely flips
-the outcome.
+ones — whereas the SCM only keeps CFs whose propagation flips the outcome
+**under the fitted SCM**. (The 66.1% is a model-only upper bound, not an
+independent validation rate — see the design caveat above.)
 
 ## Effect on Recommended Feature Changes
 
@@ -63,40 +76,49 @@ continuous features:
 
 ### Interpretation
 
-The two arms recommend **qualitatively different recourse**:
+The accepted rows of the two arms **contain different feature changes** — the
+no-SCM rows are raw DiCE perturbations, the SCM rows are causally-propagated
+consequences of the `chol`/`trestbps` intervention (see the estimand caveat in
+**Design**). With that framing:
 
-1. **The unfiltered arm makes large, physiologically-decoupled edits to the
-   directly-varied features.** DiCE freely drops `trestbps` by ~23 mmHg and
+1. **The unfiltered arm makes large raw edits to continuous features — including
+   downstream/diagnostic ones.** DiCE freely drops `trestbps` by ~23 mmHg and
    raises `thalach` by ~43 bpm to satisfy the classifier — roughly 6× and 2.5×
-   the changes the SCM deems causally necessary (−3.5 mmHg, +16 bpm). These are
-   the cheapest features for DiCE to perturb, not necessarily clinically
-   coherent ones.
+   the changes the SCM propagates (−3.5 mmHg, +16 bpm). Note `thalach` is a
+   *downstream symptom* in the causal graph, yet the no-SCM arm moves it the
+   most, because it is a cheap, high-leverage feature for the classifier — not
+   necessarily a clinically coherent change.
 
-2. **The unfiltered arm barely moves the symptom features (cp, slope), while
-   the SCM arm changes them the most.** cp improves 87.5% (SCM) vs 50.5%
-   (no-SCM) and slope 93.7% vs 41.8%; their modes shift under SCM (4→3, 2→1) but
-   stay put without it (4→4, 2→2). This is the core mechanism: in the SCM these
-   downstream symptoms move *because the causal model propagates the upstream
-   intervention onto them*; the unfiltered model has no reason to touch them, so
-   it doesn't — it just exploits whatever feature combination flips the score.
+2. **For categorical symptoms the pattern reverses: the unfiltered arm moves
+   `cp`/`slope` less than the SCM-propagated arm.** cp improves 87.5% (SCM) vs
+   50.5% (no-SCM) and slope 93.7% vs 41.8%; their modes shift under SCM (4→3,
+   2→1) but stay put without it (4→4, 2→2). Under the SCM these symptoms move
+   *because the fitted model propagates the upstream intervention onto them*; the
+   unfiltered model has no reason to touch them when a continuous tweak already
+   flips the score. (Caveat: no-SCM `slope` is unclipped — DiCE emits `slope = 0`
+   rows that the SCM arm would clip to [1, 3], so some no-SCM slope "improvements"
+   reflect an encoding/scale difference, not a clinically comparable change.)
 
-3. **Worsening is also higher and more scattered without the SCM** for the
-   directly-varied features it does respect causal sign on
-   (e.g. trestbps worsened 39.5% SCM vs 2.4% no-SCM is an artifact of the SCM's
-   smaller, bidirectional propagated changes), but it introduces *new*
-   worsening on features the SCM never worsens — restecg 7.2% and slope 3.2%
-   (both 0.0% under SCM) — i.e. unconstrained edits that move symptoms the wrong
-   way.
+3. **Worsening is higher and more scattered without the SCM on features the SCM
+   never worsens** — restecg 7.2% and slope 3.2% (both 0.0% under SCM) — i.e.
+   unconstrained edits that move symptoms the wrong way. (The reverse-looking
+   trestbps figure — worsened 39.5% SCM vs 2.4% no-SCM — is an artifact of the
+   SCM's smaller, bidirectional propagated changes vs. DiCE's one-directional
+   large drop.)
 
 ## Conclusion
 
 The SCM is **not cosmetic**. It (i) roughly halves the acceptance rate by
-rejecting CFs that fool the classifier without a coherent causal story, and
-(ii) shifts the recommended recourse from large, opportunistic edits of a few
-easily-varied inputs toward causally-propagated changes across the downstream
-symptom set. The unfiltered arm's higher retention and headline "improvements"
-(e.g. 95% thalach improvement) are an over-statement driven by causally
-ungrounded perturbations, which motivates the SCM-filtered design.
+rejecting CFs that flip the classifier without flipping under the fitted causal
+model, and (ii) yields accepted rows whose feature changes are causally
+propagated across the symptom set rather than concentrated in whichever
+continuous inputs are cheapest for the classifier. The unfiltered arm's higher
+retention (a model-only upper bound) and headline "improvements" (e.g. 95%
+thalach) overstate benefit because they reflect causally ungrounded, unclipped
+perturbations — which is the motivation for the SCM-filtered design. A stronger,
+strictly paired recourse claim would require comparing raw-DiCE vs. SCM-propagated
+values on the *same* candidate CFs; this ablation establishes the acceptance-rate
+and accepted-row-composition differences.
 
 ## Files
 

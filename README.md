@@ -287,11 +287,13 @@ python scripts/run_unfiltered_ablation.py
 
 Re-scores the *same* DiCE counterfactuals from a completed run with the deployed
 model directly (a CF is accepted iff the model predicts low risk), with **no SCM
-validation layer**. Because both arms share identical DiCE proposals and only the
-acceptance criterion differs, the comparison is apples-to-apples. Results are
+validation layer**. Both arms share identical DiCE proposals and differ only in
+the acceptance criterion. This is a candidate-filter ablation: because DiCE
+optimised those proposals against the same classifier, the no-SCM rate is a
+**model-only acceptance upper bound**, not an independent validation. Results are
 written to `fresh_cf_iterations/aggregated_results_no_scm/`. The SCM filter is
 ~2× more conservative (34.8% vs 66.1% retention); see [`ABLATION_RESULTS.md`](ABLATION_RESULTS.md)
-for the full comparison and interpretation.
+for the full comparison, estimand caveats, and interpretation.
 
 ### 7. View Results
 
