@@ -92,6 +92,7 @@ src/
 │   ├── fresh_cf_pipeline.py    # Main orchestrator
 │   ├── dice_cf_generator.py    # DiCE counterfactual generation
 │   ├── scm_analyzer.py         # SCM validation using DoWhy
+│   ├── unfiltered_scorer.py    # No-SCM ablation arm (model-only scoring)
 │   ├── metrics_calculator.py   # Diagnostic metrics
 │   ├── ci_computer.py          # Confidence interval calculation
 │   ├── sensitivity_analyzer.py # Sensitivity analysis
@@ -158,6 +159,7 @@ The pipeline follows a **modular, concurrent architecture** with these independe
    - `ev_calculator.py` computes a target-flip robustness index (single-arm flip odds plugged into the VanderWeele-Ding E-value formula; not the published two-arm quantity) in `aggregated_results/evalue.json`
    - `patient_bootstrap.py` computes optional patient-cluster inferential CIs in `patient_bootstrap_ci.csv`
    - `cohort_flowchart.py` renders `cohort_counts.json` to `cohort_flowchart.png`
+   - `unfiltered_scorer.py` + `scripts/run_unfiltered_ablation.py` run the **no-SCM ablation** (Reviewer 3, Comment 4b): re-scores the same DiCE CFs from a completed run with the deployed model directly (success = model predicts target 0), bypassing the SCM. Writes `aggregated_results_no_scm/`. See `ABLATION_RESULTS.md` for the SCM-filtered vs. unfiltered comparison.
 
 ### Key Data Flow
 

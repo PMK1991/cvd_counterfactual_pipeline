@@ -129,6 +129,7 @@ cvd_counterfactual_pipeline/
 │   │   ├── fresh_cf_pipeline.py        #   Main pipeline orchestrator
 │   │   ├── dice_cf_generator.py        #   DiCE counterfactual generation
 │   │   ├── scm_analyzer.py            #   SCM validation (DoWhy)
+│   │   ├── unfiltered_scorer.py        #   No-SCM ablation arm (model-only scoring)
 │   │   ├── metrics_calculator.py       #   Diagnostic metrics computation
 │   │   ├── ci_computer.py             #   Confidence interval computation
 │   │   ├── ev_calculator.py           #   Target-flip robustness index (E-value-like)
@@ -278,7 +279,21 @@ Adjust `--n_workers` based on CPU cores (increase for faster execution, decrease
 python src/pipeline/fresh_cf_pipeline.py --sensitivity
 ```
 
-### 6. View Results
+### 6. Ablation: SCM-Filtered vs. Unfiltered
+
+```bash
+python scripts/run_unfiltered_ablation.py
+```
+
+Re-scores the *same* DiCE counterfactuals from a completed run with the deployed
+model directly (a CF is accepted iff the model predicts low risk), with **no SCM
+validation layer**. Because both arms share identical DiCE proposals and only the
+acceptance criterion differs, the comparison is apples-to-apples. Results are
+written to `fresh_cf_iterations/aggregated_results_no_scm/`. The SCM filter is
+~2× more conservative (34.8% vs 66.1% retention); see [`ABLATION_RESULTS.md`](ABLATION_RESULTS.md)
+for the full comparison and interpretation.
+
+### 7. View Results
 
 Results are saved to `fresh_cf_iterations/aggregated_results/`:
 - `summary_report.md` — human-readable table with algorithmic-stability intervals
