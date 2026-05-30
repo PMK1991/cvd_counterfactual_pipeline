@@ -100,7 +100,7 @@ class SensitivityAnalyzer:
     def __init__(
         self,
         baseline_config: Dict,
-        output_dir: str = 'fresh_cf_iterations/sensitivity_results',
+        output_dir: str = 'sensitivity_results',
         n_iterations: int = 10,
         n_patients: int = 10,
         n_workers: int = 2,

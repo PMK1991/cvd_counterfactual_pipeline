@@ -10,6 +10,13 @@ This pipeline addresses a key challenge: counterfactual generators like DiCE pro
 
 ## Pipeline Architecture
 
+![CVD recourse pipeline control flow](cvd_recourse_control_flow_v2.svg)
+
+*Offline train phase (run once): the 565-row train split fits both the XGBoost model (`train_model.py`) and the SCM per graph variant (`train_scm.py`), serialized to `model/*.pkl`. Inference phase (per run): the 142-row held-out test split is scored, true-positive high-risk patients form the 48-patient cohort, DiCE generates counterfactuals validated by the **loaded** SCM (≈3 ms, no refit) over 100 iterations, then aggregated by `CIComputer`.*
+
+<details>
+<summary>Text diagram (same flow)</summary>
+
 ```
                         ┌─────────────────────┐
                         │   Raw CVD Dataset    │
@@ -102,9 +109,12 @@ This pipeline addresses a key challenge: counterfactual generators like DiCE pro
                           └─────────────────────┘
 ```
 
+</details>
+
 **Key design choices:**
 - **True-positive cohort** restricts full-mode analysis to held-out test-set patients with `target=1` and model prediction `1`
 - **Broad DiCE search with SCM `do(chol)` validation** lets DiCE explore the feature space while the SCM filters to candidates that flip `target` under a cholesterol intervention
+- **Pre-fitted SCM loaded at inference** — `train_scm.py` fits the SCM once on the leakage-free 565-row train split and serializes it per graph variant; each run loads `model/scm_<variant>.pkl` instead of re-fitting per worker. The pipeline is load-only and fails fast at startup if no matching artifact is present (no in-process fitting fallback)
 - **Fixed random seed per patient-CF pair** ensures deterministic SCM results for a given projected CF; variation comes from DiCE's stochastic CF generation across iterations
 - **Parallel execution** via `ProcessPoolExecutor` with configurable worker count
 - **Physiological constraints** enforce clinically valid ranges (e.g., oldpeak >= 0, cp in [1,4])
@@ -119,6 +129,7 @@ cvd_counterfactual_pipeline/
 │   │   ├── fresh_cf_pipeline.py        #   Main pipeline orchestrator
 │   │   ├── dice_cf_generator.py        #   DiCE counterfactual generation
 │   │   ├── scm_analyzer.py            #   SCM validation (DoWhy)
+│   │   ├── unfiltered_scorer.py        #   No-SCM ablation arm (model-only scoring)
 │   │   ├── metrics_calculator.py       #   Diagnostic metrics computation
 │   │   ├── ci_computer.py             #   Confidence interval computation
 │   │   ├── ev_calculator.py           #   Target-flip robustness index (E-value-like)
@@ -160,7 +171,9 @@ cvd_counterfactual_pipeline/
 │   │   ├── all_iteration_metrics.csv
 │   │   ├── ci_results.csv
 │   │   └── summary_report.md
-│   └── sensitivity_results/           # Sensitivity analysis output
+│   └── fresh_cf_pipeline.log
+│
+├── sensitivity_results/               # Sensitivity analysis output (gitignored)
 │
 ├── docs/                              # Paper drafts, reviewer comments
 ├── reports/                           # Standalone analysis reports
@@ -206,7 +219,7 @@ pip install -r requirements.txt
 python src/training/train_model.py
 ```
 
-Trains an XGBoost classifier (`max_depth=3, learning_rate=0.01, n_estimators=300`) on the CVD dataset with IQR outlier removal, StandardScaler for continuous features, and OneHotEncoder for categorical features. Saves to `model/xgb_pipeline.pkl` and reports both train and held-out test sensitivity/specificity to two decimal places.
+Trains an XGBoost classifier (`max_depth=3, learning_rate=0.01, n_estimators=300`) on the CVD dataset with IQR outlier removal, StandardScaler for continuous features, and OneHotEncoder for categorical features. Saves to `model/xgb_pipeline.pkl` and reports both train and held-out test sensitivity/specificity to two decimal places. **These baseline hyperparameters are the deployed configuration** — `train_model.py` is the only script that writes `model/xgb_pipeline.pkl`, and every metric reported below and every downstream result comes from this baseline model.
 
 To rerun the randomized balanced-accuracy hyperparameter search and optional TabPFN comparison:
 
@@ -214,7 +227,7 @@ To rerun the randomized balanced-accuracy hyperparameter search and optional Tab
 python src/training/tune_model.py
 ```
 
-Full model performance from `reports/model_tuning_results.json` (baseline = original hyperparameters; tuned = best from randomised search over an expanded grid):
+Full model performance from `reports/model_tuning_results.json`. The **baseline** row is the **deployed** model (`model/xgb_pipeline.pkl`); the **tuned** row is the best estimator from a randomised search over an expanded grid, run as a comparison experiment in `src/training/tune_model.py` and **never deployed** (it only writes the JSON report, not the pkl):
 
 | Split | Accuracy | Precision | Recall | F1 | ROC-AUC | Sensitivity | Specificity |
 |-------|--------:|----------:|-------:|---:|--------:|------------:|------------:|
@@ -223,13 +236,23 @@ Full model performance from `reports/model_tuning_results.json` (baseline = orig
 | Tuned — Train    | 0.9097 | 0.8919 | 0.9329 | 0.9119 | 0.9652 | 0.9329 | 0.8865 |
 | Tuned — Test     | 0.9155 | 0.8571 | 0.9231 | 0.8889 | 0.9675 | 0.9231 | 0.9111 |
 
-Tuned best params: `max_depth=4, learning_rate=0.05, n_estimators=200, subsample=0.6, colsample_bytree=0.6, min_child_weight=5, gamma=0.5, reg_alpha=0.01, reg_lambda=2.0, scale_pos_weight=1.0`. Despite the broader search, test-set sensitivity and specificity are identical across both models, confirming that the baseline hyperparameters were already near-optimal for this dataset.
+Tuned best params (comparison experiment only, **not deployed**): `max_depth=4, learning_rate=0.05, n_estimators=200, subsample=0.6, colsample_bytree=0.6, min_child_weight=5, gamma=0.5, reg_alpha=0.01, reg_lambda=2.0, scale_pos_weight=1.0`. Despite the broader search, test-set sensitivity and specificity are **identical** to the baseline (92.31% / 91.11%) and the tuned test ROC-AUC is in fact slightly **lower** (0.9675 vs the baseline's 0.9746). The baseline hyperparameters were therefore already near-optimal for this dataset, so the deployed model and all reported metrics use the baseline configuration (`max_depth=3, learning_rate=0.01, n_estimators=300`).
 
 The corresponding confusion matrix on the cleaned held-out test set (both models) is `[[82, 8], [4, 48]]` with rows as true labels and columns as predictions. Sensitivity is `TP / (TP + FN) = 48 / 52 = 0.9231`, specificity is `TN / (TN + FP) = 82 / 90 = 0.9111`.
 
 **Clinical implications of sensitivity and specificity.** In a CVD screening context the two metrics have asymmetric clinical consequences. A sensitivity of **92.3%** means the model correctly flags approximately 9 in every 10 genuinely high-risk patients, keeping the false-negative rate low (4 missed cases out of 52). This is the more safety-critical metric: a missed high-risk patient receives no recourse recommendations and may not take the lifestyle steps that could defer a cardiovascular event. A specificity of **91.1%** means 9 in 10 truly low-risk patients are correctly left out of the counterfactual pipeline, avoiding unnecessary intervention recommendations and wasted computation (8 false positives out of 90). Both values exceed the 80–85% benchmarks reported in comparable CVD prediction studies on this dataset, and together they establish that the true-positive high-risk cohort entering the downstream SCM validation is both **comprehensive** (few genuine high-risk patients missed) and **precise** (few low-risk patients misrouted into recourse computation). The model's operating point therefore favours the clinically preferred direction — higher sensitivity at modest specificity cost — consistent with standard practice for preventive-screening classifiers where the cost of a false negative substantially exceeds the cost of a false positive.
 
-### 3. Run the Pipeline
+### 3. Train the SCM Validator
+
+```bash
+python src/training/train_scm.py --all
+```
+
+Fits the DoWhy `InvertibleStructuralCausalModel` once per graph variant on the **leakage-free 565-row train split** (`fit_seed=42`) and serializes each to `model/scm_<variant>.pkl`. The pipeline then **loads** the matching artifact at inference (≈3 ms) instead of re-fitting the SCM in every worker on every run — a large speedup. `--all` covers every variant (`minimal`, `full`, `full_with_symptom_links`, `extended`), which the `graph_structure` sensitivity sweep needs; omit it to fit only `full`.
+
+**This is a required step** — the SCM is fitted *only* here. The pipeline runs in a single mode: offline fit (`train_scm.py`) then load-only inference. If the matching artifact is missing, stale, or its `graph_structure`/`fit_seed`/graph edges do not match the config, the pipeline **fails fast at startup** with a clear message telling you to (re)run `train_scm.py` — there is no in-process fitting fallback. The artifacts are version-sensitive pickles, so regenerate them if `dowhy`/`scikit-learn` versions change.
+
+### 4. Run the Pipeline
 
 **Quick test** (5 patients, 5 iterations, ~6 min):
 ```bash
@@ -250,13 +273,27 @@ python src/pipeline/fresh_cf_pipeline.py --run_patient_bootstrap --bootstrap_ite
 
 Adjust `--n_workers` based on CPU cores (increase for faster execution, decrease if memory-constrained).
 
-### 4. Sensitivity Analysis
+### 5. Sensitivity Analysis
 
 ```bash
 python src/pipeline/fresh_cf_pipeline.py --sensitivity
 ```
 
-### 5. View Results
+### 6. Ablation: SCM-Filtered vs. Unfiltered
+
+```bash
+python scripts/run_unfiltered_ablation.py
+```
+
+Re-scores the *same* DiCE counterfactuals from a completed run with the deployed
+model directly (a CF is accepted iff the model predicts low risk), with **no SCM
+validation layer**. Because both arms share identical DiCE proposals and only the
+acceptance criterion differs, the comparison is apples-to-apples. Results are
+written to `fresh_cf_iterations/aggregated_results_no_scm/`. The SCM filter is
+~2× more conservative (34.8% vs 66.1% retention); see [`ABLATION_RESULTS.md`](ABLATION_RESULTS.md)
+for the full comparison and interpretation.
+
+### 7. View Results
 
 Results are saved to `fresh_cf_iterations/aggregated_results/`:
 - `summary_report.md` — human-readable table with algorithmic-stability intervals
@@ -354,44 +391,44 @@ With edges: risk factors → target → symptoms, plus direct risk-factor linkag
 
 ## Results (100 iterations, 48 patients, 95% algorithmic-stability intervals)
 
-**Successful SCM-validated CFs per iteration:** 79.9 (95% algorithmic-stability interval: [64.0, 100.0])
+**Successful SCM-validated CFs per iteration:** 82.9 (95% algorithmic-stability interval: [76.0, 88.0])
 
-**Target flip rate:** 34.7% (95% algorithmic-stability interval: [28.9%, 43.0%])
+**Target flip rate:** 34.8% (95% algorithmic-stability interval: [32.7%, 36.7%])
 
-**Target-flip robustness index:** 3.18 (interval: [1.98, 4.36]). Computed by plugging the single-arm flip-rate odds into the VanderWeele-Ding E-value formula; reported as a derivative robustness summary specific to this pipeline, *not* the published two-arm E-value and not proof of causal identification or clinical effectiveness.
+**Target-flip robustness index:** 3.16 (interval: [2.85, 3.53]). Computed by plugging the single-arm flip-rate odds into the VanderWeele-Ding E-value formula; reported as a derivative robustness summary specific to this pipeline, *not* the published two-arm E-value and not proof of causal identification or clinical effectiveness.
 
 | Metric | Improve (%) | Worsen (%) | No Change (%) | Mode Before/After | Mean Change | 95% Algorithmic-Stability Interval (Improve %) |
 |--------|-------------|------------|---------------|-------------------|-------------|---------------------|
-| Resting BP (trestbps) | 51.6 | 46.7 | 1.7 | -- | -2.70 mmHg | [40.3%, 67.0%] |
-| Chest Pain (cp) | 88.9 | 4.2 | 6.9 | 4 to 3 | -- | [81.5%, 94.7%] |
-| Exercise Angina (exang) | 83.0 | 0.0 | 17.0 | 1 to 0 | -- | [76.2%, 89.0%] |
-| ST Depression (oldpeak) | 80.4 | 19.6 | 0.0 | -- | -1.18 mm | [73.9%, 86.7%] |
-| Max Heart Rate (thalach) | 78.6 | 21.0 | 0.4 | -- | +22.47 bpm | [71.0%, 83.8%] |
-| ST Slope (slope) | 92.2 | 0.1 | 7.8 | 2 to 1 | -- | [89.1%, 94.5%] |
-| Resting ECG (restecg) | 55.3 | 0.0 | 44.7 | 0 to 0 | -- | [46.3%, 63.6%] |
+| Resting BP (trestbps) | 60.3 | 39.5 | 0.1 | -- | -3.48 mmHg | [57.0%, 64.6%] |
+| Chest Pain (cp) | 87.5 | 12.1 | 0.5 | 4 to 3 | -- | [85.6%, 88.6%] |
+| Exercise Angina (exang) | 62.5 | 0.0 | 37.5 | 1 to 0 | -- | [58.7%, 65.3%] |
+| ST Depression (oldpeak) | 72.8 | 27.1 | 0.1 | -- | -1.51 mm | [69.6%, 77.3%] |
+| Max Heart Rate (thalach) | 75.0 | 24.1 | 0.9 | -- | +16.15 bpm | [72.1%, 77.3%] |
+| ST Slope (slope) | 93.7 | 0.0 | 6.3 | 2 to 1 | -- | [92.4%, 94.3%] |
+| Resting ECG (restecg) | 38.6 | 0.0 | 61.4 | 0 to 0 | -- | [35.9%, 42.3%] |
 
 Intervals in this table are percentile intervals across 100 independent DiCE-generation runs. They quantify algorithmic stability under repeated stochastic counterfactual generation and should not be interpreted as patient-level inferential confidence intervals.
 
-Observed change ranges across all 7,992 successful SCM-validated rows:
+Observed change ranges across all 8,286 successful SCM-validated rows:
 
 | Variable | Signed Change Range | Absolute Change Range | Mean Signed Change |
 |----------|---------------------|-----------------------|--------------------|
-| `chol` | -191 to +34 mg/dL | 0 to 191 mg/dL | -56.81 mg/dL |
-| `trestbps` | -36 to +32 mmHg | 0 to 36 mmHg | -2.79 mmHg |
-| `cp` | -1 to +3 category levels | 0 to 3 levels | -0.80 |
-| `exang` | -1 to 0 | 0 to 1 | -0.83 |
-| `oldpeak` | -5.60 to +0.87 mm | 0 to 5.60 mm | -1.18 mm |
-| `thalach` | -34 to +71 bpm | 0 to 71 bpm | +22.40 bpm |
-| `slope` | -2 to +1 category levels | 0 to 2 levels | -1.03 |
-| `restecg` | -2 to 0 category levels | 0 to 2 levels | -0.80 |
+| `chol` | -132 to +36 mg/dL | 0 to 132 mg/dL | -56.70 mg/dL |
+| `trestbps` | -31 to +19 mmHg | 0 to 31 mmHg | -3.47 mmHg |
+| `cp` | -1 to +2 category levels | 0 to 2 levels | -0.63 |
+| `exang` | -1 to 0 | 0 to 1 | -0.63 |
+| `oldpeak` | -6.13 to +1.07 mm | 0 to 6.13 mm | -1.50 mm |
+| `thalach` | -34 to +67 bpm | 0 to 67 bpm | +16.16 bpm |
+| `slope` | -2 to 0 category levels | 0 to 2 levels | -1.02 |
+| `restecg` | -2 to 0 category levels | 0 to 2 levels | -0.57 |
 
-`exang` and `restecg` show zero worsening across all successful rows; `slope` worsens in only 0.1% of iteration aggregates (a single +1 step). These reflect the observed true-positive cohort and fitted SCM response under cholesterol-only intervention.
+`exang`, `slope`, and `restecg` show zero worsening across all successful rows. These reflect the observed true-positive cohort and fitted SCM response under cholesterol-only intervention, validated with the leakage-free pre-fitted SCM (565-row cleaned training split).
 
 ## Sensitivity Analysis
 
 One-at-a-time (OAT) parameter sweeps are supported for `total_cfs`, `trestbps_range`, `chol_lower`, `confidence_level`, `graph_structure`, `intervention_targets`, and `n_samples`. Sensitivity outputs should be regenerated after changing the primary intervention strategy, because the final analysis now uses broad DiCE search followed by cholesterol-only projection and SCM `do(chol)`.
 
-See `fresh_cf_iterations/sensitivity_results/sensitivity_report.md` for full comparison tables.
+See `sensitivity_results/sensitivity_report.md` for full comparison tables.
 
 ## License
 

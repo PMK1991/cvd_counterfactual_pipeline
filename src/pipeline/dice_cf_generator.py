@@ -227,11 +227,11 @@ class DiceCFGenerator:
         cf_paths = []
         final_cfs = cf_example.final_cfs_df
         if final_cfs is not None and len(final_cfs) > 0:
-            # DiCE's final_cfs_df can carry duplicate row indices, so use
-            # enumerate to produce a unique file index per CF.
-            for i, (_, cf_row) in enumerate(final_cfs.iterrows()):
+            # DiCE's final_cfs_df can carry duplicate row indices, so use a
+            # positional index per CF and iloc[[i]] to keep per-column dtypes.
+            for i in range(len(final_cfs)):
                 cf_path = cf_dir / f"patient_{patient_id}_cf_{i}.csv"
-                cf_row.to_frame().T.to_csv(cf_path, index=False)
+                final_cfs.iloc[[i]].to_csv(cf_path, index=False)
                 cf_paths.append(str(cf_path))
 
         logger.debug(f"Saved {len(cf_paths)} CFs for patient {patient_id}, iteration {iteration_num}")

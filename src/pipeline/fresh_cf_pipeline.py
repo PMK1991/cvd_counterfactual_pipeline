@@ -36,15 +36,80 @@ from src.pipeline.metrics_calculator import MetricsCalculator
 from src.pipeline.ci_computer import CIComputer
 
 # Configure logging
+_LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('fresh_cf_pipeline.log'),
-        logging.StreamHandler()
-    ]
+    format=_LOG_FORMAT,
+    handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
+
+
+def _attach_file_logging(log_dir) -> None:
+    """Attach a FileHandler writing <log_dir>/fresh_cf_pipeline.log to the root logger.
+
+    Called once from the main process after the output directory is known so the
+    run log lives alongside its results instead of at the repository root. The
+    file handler is intentionally not part of module-level basicConfig so that
+    ProcessPoolExecutor workers (which re-import this module) do not each open a
+    stray root-level log file.
+    """
+    log_dir = Path(log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = (log_dir / 'fresh_cf_pipeline.log').resolve()
+    root = logging.getLogger()
+    for handler in root.handlers:
+        if isinstance(handler, logging.FileHandler) and \
+                Path(getattr(handler, 'baseFilename', '')) == log_path:
+            return
+    file_handler = logging.FileHandler(log_path)
+    file_handler.setFormatter(logging.Formatter(_LOG_FORMAT))
+    root.addHandler(file_handler)
+
+
+# ----------------------------------------------------------------------
+# Per-worker module caches
+# ----------------------------------------------------------------------
+# run_single_iteration() runs in a ProcessPoolExecutor worker. Building the
+# DiCE explainer (load model + data + outlier removal) and fitting the SCM
+# (gcm.auto + gcm.fit) are expensive and identical across iterations, so we
+# build them once per worker process and reuse them. Each call to
+# run_concurrent_pipeline() opens a fresh executor (new processes), and the
+# cache key includes the relevant sub-config, so config changes (e.g. in
+# sensitivity sweeps) always rebuild.
+_WORKER_DICE = None
+_WORKER_DICE_KEY = None
+_WORKER_SCM = None
+_WORKER_SCM_KEY = None
+
+
+def _get_worker_dice(config: Dict) -> DiceCFGenerator:
+    """Return a per-process cached DiCE generator, rebuilding if config changed."""
+    global _WORKER_DICE, _WORKER_DICE_KEY
+    key = json.dumps(config['dice'], sort_keys=True, default=str)
+    if _WORKER_DICE is None or _WORKER_DICE_KEY != key:
+        dice_gen = DiceCFGenerator(
+            model_path=config['dice']['model_path'],
+            data_path=config['dice']['data_path'],
+            config=config['dice'],
+        )
+        dice_gen.load_model_and_data()
+        dice_gen.setup_dice_explainer()
+        _WORKER_DICE = dice_gen
+        _WORKER_DICE_KEY = key
+    return _WORKER_DICE
+
+
+def _get_worker_scm(config: Dict) -> SCMAnalyzer:
+    """Return a per-process cached, fitted SCM analyzer, rebuilding if config changed."""
+    global _WORKER_SCM, _WORKER_SCM_KEY
+    key = json.dumps(config['scm'], sort_keys=True, default=str)
+    if _WORKER_SCM is None or _WORKER_SCM_KEY != key:
+        scm_analyzer = SCMAnalyzer(config=config['scm'])
+        scm_analyzer.initialize_analyzer()
+        _WORKER_SCM = scm_analyzer
+        _WORKER_SCM_KEY = key
+    return _WORKER_SCM
 
 
 class FreshCFPipeline:
@@ -113,6 +178,8 @@ class FreshCFPipeline:
                 'n_samples': 1000,
                 'graph_structure': 'full',
                 'intervention_targets': 'chol_only',
+                'fit_seed': 42,
+                'model_dir': 'model',
             },
             'output': {
                 'base_dir': 'fresh_cf_iterations',
@@ -220,14 +287,8 @@ class FreshCFPipeline:
         try:
             logger.info(f"Starting iteration {iteration_num}")
 
-            # Initialize modules in this process
-            dice_gen = DiceCFGenerator(
-                model_path=self.config['dice']['model_path'],
-                data_path=self.config['dice']['data_path'],
-                config=self.config['dice']
-            )
-            dice_gen.load_model_and_data()
-            dice_gen.setup_dice_explainer()
+            # Reuse per-worker cached DiCE generator (model/data/explainer)
+            dice_gen = _get_worker_dice(self.config)
 
             # Step 1: Generate CFs for all patients
             iteration_dir = self.output_dir / f"iteration_{iteration_num:03d}"
@@ -235,14 +296,9 @@ class FreshCFPipeline:
                 shutil.rmtree(iteration_dir)
 
             cf_results = []
-            for idx, (_, patient_row) in enumerate(patients_df.iterrows()):
-                patient_data = patient_row.to_frame().T
-                # Restore original dtypes (to_frame().T casts int→float due to mixed Series)
-                for col in patient_data.columns:
-                    if col in patients_df.columns:
-                        patient_data[col] = patient_data[col].astype(patients_df[col].dtype)
-                # Drop target column — DiCE expects features only
-                patient_data = patient_data.drop(columns=['target'], errors='ignore')
+            for idx in range(len(patients_df)):
+                # iloc[[idx]] returns a single-row DataFrame preserving dtypes
+                patient_data = patients_df.iloc[[idx]].drop(columns=['target'], errors='ignore')
                 result = dice_gen.generate_and_save_for_patient(
                     patient_data,
                     patient_id=idx,
@@ -254,9 +310,8 @@ class FreshCFPipeline:
             total_generated_cfs = sum(r['n_cfs_generated'] for r in cf_results)
             total_requested_cfs = len(patients_df) * self.config['dice']['total_cfs']
 
-            # Step 2: SCM validation
-            scm_analyzer = SCMAnalyzer(config=self.config['scm'])
-            scm_analyzer.initialize_analyzer()
+            # Step 2: SCM validation (reuse per-worker cached fitted model)
+            scm_analyzer = _get_worker_scm(self.config)
 
             successful_cfs = scm_analyzer.analyze_iteration(
                 iteration_dir=str(iteration_dir)
@@ -312,6 +367,13 @@ class FreshCFPipeline:
 
         # Load patient data
         patients_df = self.load_patient_data()
+
+        # Fail fast: load the pre-fitted SCM artifact once in the parent process
+        # so a missing/stale/corrupt artifact raises here instead of silently
+        # turning every worker iteration into a zero-CF "error" result. Use a
+        # throwaway analyzer so the (large) loaded model is not pickled into
+        # each task submitted to the pool.
+        SCMAnalyzer(config=self.config['scm']).initialize_analyzer()
 
         # Create output directory
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -504,10 +566,12 @@ def main():
             n_patients=args.sensitivity_patients,
             n_workers=config['pipeline']['n_workers'],
         )
+        _attach_file_logging(analyzer.output_dir)
         analyzer.run_sensitivity_analysis(parameters=args.sensitivity_params)
     elif args.bootstrap_only:
         from src.pipeline.patient_bootstrap import PatientBootstrap
         output_dir = Path(config['output']['base_dir'])
+        _attach_file_logging(output_dir)
         bootstrap = PatientBootstrap(
             iterations=config['pipeline'].get('bootstrap_iterations', 1000),
             confidence_level=config['ci']['confidence_level'],
@@ -524,6 +588,7 @@ def main():
                 output_dir / "aggregated_results" / "patient_bootstrap_ci.csv",
             )
     else:
+        _attach_file_logging(config['output']['base_dir'])
         pipeline = FreshCFPipeline(config=config)
         pipeline.run_full_pipeline()
 

@@ -33,6 +33,8 @@ scm:
   n_samples: 1000  # SCM Monte Carlo samples per intervention
   graph_structure: "full"
   intervention_targets: "chol_only"
+  fit_seed: 42  # Must match the artifact built by train_scm.py --fit-seed
+  model_dir: "model"            # Where train_scm.py writes scm_<variant>.pkl
 
 output:
   base_dir: "fresh_cf_iterations"

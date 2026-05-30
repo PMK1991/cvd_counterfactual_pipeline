@@ -295,7 +295,6 @@ def main():
     cfg = FreshCFPipeline._default_config()
     _deep_update(cfg, load_yaml_config(args.config))
     scm_cfg = dict(cfg["scm"])
-    scm_cfg.setdefault("train_data_path", cfg["dice"]["data_path"])
     graph_variant = scm_cfg.get("graph_structure", "full")
 
     analyzer = SCMAnalyzer(config=scm_cfg)
