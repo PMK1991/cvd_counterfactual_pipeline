@@ -44,13 +44,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("improvement_recourse")
 
 
-# The deployed SCM config (pipeline_config.yaml -> scm). Critically,
-# intervention_targets is 'chol_only' (do(chol) only) — NOT SCMAnalyzer's
-# 'both' default. Used as the fallback when PyYAML / the YAML file is
-# unavailable, so the re-score matches the run even without yaml installed.
+# The deployed SCM config (pipeline_config.yaml -> scm). The SCM always
+# intervenes on chol only (do(chol)); this just carries the graph variant and
+# sampling settings as the fallback when PyYAML / the YAML file is unavailable,
+# so the re-score matches the run even without yaml installed.
 _DEPLOYED_SCM_DEFAULTS = {
     'graph_structure': 'full',
-    'intervention_targets': 'chol_only',
     'n_samples': 1000,
     'fit_seed': 42,
     'model_dir': 'model',
@@ -61,9 +60,7 @@ def _load_scm_config() -> dict:
     """Return the deployed ``scm`` config block.
 
     Reads pipeline_config.yaml when PyYAML and the file are available;
-    otherwise falls back to ``_DEPLOYED_SCM_DEFAULTS`` (NOT SCMAnalyzer's
-    built-in defaults, whose ``intervention_targets='both'`` would not match
-    the deployed ``chol_only`` run and would corrupt the flip partition).
+    otherwise falls back to ``_DEPLOYED_SCM_DEFAULTS``.
     """
     path = _PROJECT_ROOT / "pipeline_config.yaml"
     try:
@@ -120,9 +117,8 @@ def run_recourse(iterations_dir: Path, graph_structure: str,
     if graph_structure:  # explicit CLI override
         analyzer.config['graph_structure'] = graph_structure
     logger.info(
-        "SCM re-score config: graph_structure=%s, intervention_targets=%s, n_samples=%s",
+        "SCM re-score config: graph_structure=%s, n_samples=%s (do(chol) only)",
         analyzer.config.get('graph_structure'),
-        analyzer.config.get('intervention_targets'),
         analyzer.config.get('n_samples'),
     )
     analyzer.initialize_analyzer()

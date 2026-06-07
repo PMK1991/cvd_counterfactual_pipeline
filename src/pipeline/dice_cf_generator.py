@@ -20,8 +20,6 @@ import copy
 import pandas as pd
 import dice_ml
 from dice_ml import Data, Model, Dice
-import threading
-import queue
 import pickle
 from typing import List, Dict, Optional, Tuple
 import logging
@@ -64,8 +62,11 @@ class DiceCFGenerator:
         return {
             'method': 'genetic',
             'total_cfs': 5,
+            # DiCE performs an unconstrained search across all features
+            # (features_to_vary=None); only chol is constrained to the
+            # clinical-target corridor. The chol-only projection happens at the
+            # SCM step (do(chol)), not by restricting DiCE.
             'permitted_range': {
-                'trestbps': [100, 120],
                 'chol': [150, 200]
             },
             'timeout': 45,
@@ -158,37 +159,26 @@ class DiceCFGenerator:
         permitted_range = copy.deepcopy(self.config['permitted_range'])
         if permitted_range['chol'][1] is None:
             original_chol = patient_data['chol'].values[0]
-            permitted_range['chol'][1] = original_chol - 0.1 * original_chol
+            lower_bound = permitted_range['chol'][0]
+            permitted_range['chol'][1] = max(lower_bound, original_chol - 0.1 * original_chol)
 
-        # Use threading with timeout for robustness
-        result_queue = queue.Queue()
-
-        def target():
-            try:
-                kwargs = dict(
-                    query_instances=patient_data,
-                    total_CFs=self.config['total_cfs'],
-                    desired_class='opposite',
-                    permitted_range=permitted_range,
-                )
-                if self.config.get('features_to_vary') is not None:
-                    kwargs['features_to_vary'] = self.config['features_to_vary']
-                kwargs.update(self.config.get('search_params', {}))
-                cf_result = self.dice_exp.generate_counterfactuals(**kwargs)
-                result_queue.put(cf_result)
-            except Exception as e:
-                logger.warning(f"DiCE generation failed: {e}")
-                result_queue.put(None)
-
-        thread = threading.Thread(target=target, daemon=True)
-        thread.start()
-        thread.join(timeout)
-
-        if thread.is_alive():
-            logger.warning(f"DiCE generation timed out after {timeout}s")
+        try:
+            kwargs = dict(
+                query_instances=patient_data,
+                total_CFs=self.config['total_cfs'],
+                desired_class='opposite',
+                permitted_range=permitted_range,
+            )
+            if self.config.get('features_to_vary') is not None:
+                kwargs['features_to_vary'] = self.config['features_to_vary']
+            kwargs.update(self.config.get('search_params', {}))
+            
+            # Rely on DiCE's internal maxiterations to terminate
+            cf_result = self.dice_exp.generate_counterfactuals(**kwargs)
+            return cf_result
+        except Exception as e:
+            logger.warning(f"DiCE generation failed: {e}")
             return None
-
-        return result_queue.get() if not result_queue.empty() else None
 
     def save_counterfactuals(
         self,

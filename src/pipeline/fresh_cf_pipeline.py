@@ -157,8 +157,9 @@ class FreshCFPipeline:
                 'data_path': 'data/heart_statlog_cleveland_hungary_final.csv',
                 'method': 'genetic',
                 'total_cfs': 5,
+                # Unconstrained DiCE search; only chol is range-constrained.
+                # chol-only projection is applied at the SCM step (do(chol)).
                 'permitted_range': {
-                    'trestbps': [100, 120],
                     'chol': [150, 200]
                 },
                 'timeout': 45,
@@ -527,12 +528,13 @@ def main():
     parser.add_argument('--test_mode', action='store_true', help='Run in test mode (5 patients, 5 iterations)')
     parser.add_argument('--run_patient_bootstrap', action='store_true', help='Run patient-level bootstrap after the pipeline')
     parser.add_argument('--bootstrap_only', action='store_true', help='Skip the pipeline; only bootstrap from cached successful CFs in output.base_dir')
+    parser.add_argument('--output_base', type=str, default=None, help='Override output base directory (default: output.base_dir from config). Ignored in --test_mode.')
     parser.add_argument('--bootstrap_iterations', type=int, default=None, help='Patient bootstrap replicates')
     parser.add_argument('--sensitivity', action='store_true', help='Run sensitivity analysis')
     parser.add_argument('--sensitivity_iterations', type=int, default=10, help='Iterations per sensitivity variant')
     parser.add_argument('--sensitivity_patients', type=int, default=10, help='Patients per sensitivity variant')
     parser.add_argument('--sensitivity_params', nargs='*', default=None,
-                        help='Parameters to vary (default: all). Options: total_cfs, trestbps_range, chol_lower, confidence_level, graph_structure, intervention_targets, n_samples')
+                        help='Parameters to vary (default: all). Options: total_cfs, chol_lower, confidence_level, graph_structure, n_samples')
 
     args = parser.parse_args()
 
@@ -557,6 +559,8 @@ def main():
 
     if args.test_mode:
         config['output']['base_dir'] = 'fresh_cf_iterations_test'
+    elif args.output_base:
+        config['output']['base_dir'] = args.output_base
 
     if args.sensitivity:
         from src.pipeline.sensitivity_analyzer import SensitivityAnalyzer

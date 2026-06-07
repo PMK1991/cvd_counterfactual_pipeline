@@ -314,25 +314,26 @@ python scripts/run_improvement_recourse.py
 ```
 
 Re-scores the *same* DiCE counterfactuals from a completed run through the SCM
-under the deployed `do(chol)` intervention, but keeps the CFs that did **not**
-flip the diagnosis (`target` stays 1), asking a softer question: even without
-reversing the label, did the intervention still move downstream symptoms
-(cp, restecg, thalach, exang, slope, oldpeak) in a clinically-beneficial
-direction? The re-score reproduces the run's flip partition exactly (mean 82.9
-flips/iteration, matching the main results above). Results are written to
-`fresh_cf_iterations/aggregated_results_recourse/` (`recourse_summary.md`,
+under the `do(chol)` intervention, but keeps the CFs that did **not** flip the
+diagnosis (`target` stays 1), asking a softer question: even without reversing
+the label, did the intervention still move downstream symptoms (cp, restecg,
+thalach, exang, slope, oldpeak) in a clinically-beneficial direction? The
+re-score reproduces the run's flip partition exactly (mean 82.8 flips/iteration,
+matching the main results above). Results are written to
+`<iterations_dir>/aggregated_results_recourse/` (`recourse_summary.md`,
 `summary_report.md`, `ci_results.csv`, `all_iteration_metrics.csv`) plus the
 per-iteration non-flip rows in `iteration_NNN/non_flip_recourse/`.
 
-Over 100 iterations (~155 non-flip CFs/iteration): **any-improvement 100%**,
-**Improvement Recourse Rate** 36.4% strict (≥1 symptom better, none worse) /
-90.3% lenient (≥1 better, net ≥ 0), mean **+1.4** net symptoms improved per CF.
-The continuous symptoms ease (oldpeak −0.52 mm, thalach +10.5 bpm, restecg → normal
-66%) while the categorical disease-severity markers (cp, exang) do not improve
-when the label does not flip — the expected, honest signal. Note the non-flip
-symptom shifts partly reflect resampling toward the `target=1` conditional mean
-(`gcm.interventional_samples` redraws symptom noise), so read them as
-distribution shifts, not abduction-based individual counterfactuals.
+Over 100 iterations (155.1 non-flip CFs/iteration): **any-improvement 100%**,
+**Improvement Recourse Rate** 36.2% strict (≥1 symptom better, none worse) /
+90.5% lenient (≥1 better, net ≥ 0), mean **+1.4** net symptoms improved per CF.
+The continuous symptoms ease (oldpeak −0.51 mm, thalach +10.5 bpm, restecg → normal
+66%, and the indirectly-moved trestbps −1.26 mmHg) while the categorical
+disease-severity markers (cp, exang) do not improve when the label does not flip
+— the expected, honest signal. Note the non-flip symptom shifts partly reflect
+resampling toward the `target=1` conditional mean (`gcm.interventional_samples`
+redraws symptom noise), so read them as distribution shifts, not abduction-based
+individual counterfactuals.
 
 ## Dataset
 
@@ -385,16 +386,15 @@ pipeline:
 dice:
   method: "genetic"         # DiCE algorithm
   total_cfs: 5              # CFs generated per patient
-  features_to_vary: null    # Broad DiCE search
+  features_to_vary: null    # Broad DiCE search (all features)
   permitted_range:
-    trestbps: [100, 120]
-    chol: [150, 200]        # Cholesterol intervention range
+    chol: [150, 200]        # Only chol is range-constrained
   timeout: 45               # Seconds per patient
 
 scm:
   n_samples: 1000           # SCM Monte Carlo samples per intervention
   graph_structure: "full"   # minimal, full, full_with_symptom_links, or extended
-  intervention_targets: "chol_only"
+  # Intervention is always do(chol) only; trestbps/symptoms propagate structurally
 
 ci:
   confidence_level: 0.95    # 95% algorithmic-stability intervals
@@ -414,48 +414,48 @@ The graph encodes three layers:
 
 With edges: risk factors → target → symptoms, plus direct risk-factor linkages (`age → chol`, `age → trestbps`, `sex → trestbps`, `sex → chol`, `chol → trestbps`). Symptom-to-symptom cross-links (`thalach → exang`, `exang → cp`) are *excluded* from the default `full` variant to preserve the conditional-independence assumption that symptoms depend on each other only through `target`; the legacy graph that included them is reachable via `graph_structure: full_with_symptom_links`.
 
-**Intervention mechanism:** the final run uses `do(chol=X)` only. DiCE searches broadly within the configured `chol` and `trestbps` ranges, but SCM validation reads only the `chol` value from each candidate. DoWhy's `gcm.interventional_samples()` propagates the cholesterol intervention through the DAG; `trestbps`, `cp`, `exang`, `oldpeak`, `thalach`, `slope`, and `restecg` are interpreted as downstream SCM effects. A fixed random seed derived from patient features ensures deterministic results per patient-CF pair.
+**Intervention mechanism:** the final run uses `do(chol=X)` only. DiCE searches broadly across all features with only the `chol` range constrained, but SCM validation reads only the `chol` value from each candidate. DoWhy's `gcm.interventional_samples()` propagates the cholesterol intervention through the DAG; `trestbps`, `cp`, `exang`, `oldpeak`, `thalach`, `slope`, and `restecg` are interpreted as downstream SCM effects. A fixed random seed derived from patient features ensures deterministic results per patient-CF pair.
 
 **Categorical columns** (`target`, `exang`, `fbs`, `cp`, `restecg`, `slope`) are cast to `category` dtype before model fitting, matching the notebook setup.
 
 ## Results (100 iterations, 48 patients, 95% algorithmic-stability intervals)
 
-**Successful SCM-validated CFs per iteration:** 82.9 (95% algorithmic-stability interval: [76.0, 88.0])
+**Successful SCM-validated CFs per iteration:** 82.8 (95% algorithmic-stability interval: [79.0, 87.5])
 
-**Target flip rate:** 34.8% (95% algorithmic-stability interval: [32.7%, 36.7%])
+**Target flip rate:** 34.8% (95% algorithmic-stability interval: [33.1%, 36.7%])
 
-**Target-flip robustness index:** 3.16 (interval: [2.85, 3.53]). Computed by plugging the single-arm flip-rate odds into the VanderWeele-Ding E-value formula; reported as a derivative robustness summary specific to this pipeline, *not* the published two-arm E-value and not proof of causal identification or clinical effectiveness.
+**Target-flip robustness index:** 3.15 (interval: [2.84, 3.47]). Computed by plugging the single-arm flip-rate odds into the VanderWeele-Ding E-value formula; reported as a derivative robustness summary specific to this pipeline, *not* the published two-arm E-value and not proof of causal identification or clinical effectiveness.
 
 | Metric | Improve (%) | Worsen (%) | No Change (%) | Mode Before/After | Mean Change | 95% Algorithmic-Stability Interval (Improve %) |
 |--------|-------------|------------|---------------|-------------------|-------------|---------------------|
-| Resting BP (trestbps) | 60.3 | 39.5 | 0.1 | -- | -3.48 mmHg | [57.0%, 64.6%] |
-| Chest Pain (cp) | 87.5 | 12.1 | 0.5 | 4 to 3 | -- | [85.6%, 88.6%] |
-| Exercise Angina (exang) | 62.5 | 0.0 | 37.5 | 1 to 0 | -- | [58.7%, 65.3%] |
-| ST Depression (oldpeak) | 72.8 | 27.1 | 0.1 | -- | -1.51 mm | [69.6%, 77.3%] |
-| Max Heart Rate (thalach) | 75.0 | 24.1 | 0.9 | -- | +16.15 bpm | [72.1%, 77.3%] |
-| ST Slope (slope) | 93.7 | 0.0 | 6.3 | 2 to 1 | -- | [92.4%, 94.3%] |
-| Resting ECG (restecg) | 38.6 | 0.0 | 61.4 | 0 to 0 | -- | [35.9%, 42.3%] |
+| Resting BP (trestbps) | 59.5 | 40.3 | 0.1 | -- | -3.31 mmHg | [56.4%, 62.3%] |
+| Chest Pain (cp) | 87.7 | 11.8 | 0.5 | 4 to 3 | -- | [85.3%, 89.2%] |
+| Exercise Angina (exang) | 63.3 | 0.0 | 36.7 | 1 to 0 | -- | [60.2%, 66.5%] |
+| ST Depression (oldpeak) | 71.8 | 28.1 | 0.1 | -- | -1.49 mm | [69.2%, 75.2%] |
+| Max Heart Rate (thalach) | 75.5 | 23.9 | 0.6 | -- | +16.29 bpm | [73.4%, 77.3%] |
+| ST Slope (slope) | 93.8 | 0.0 | 6.2 | 2 to 1 | -- | [92.7%, 94.3%] |
+| Resting ECG (restecg) | 38.6 | 0.0 | 61.4 | 0 to 0 | -- | [35.9%, 41.8%] |
 
 Intervals in this table are percentile intervals across 100 independent DiCE-generation runs. They quantify algorithmic stability under repeated stochastic counterfactual generation and should not be interpreted as patient-level inferential confidence intervals.
 
-Observed change ranges across all 8,286 successful SCM-validated rows:
+Observed change ranges across all 8,282 successful SCM-validated rows:
 
 | Variable | Signed Change Range | Absolute Change Range | Mean Signed Change |
 |----------|---------------------|-----------------------|--------------------|
-| `chol` | -132 to +36 mg/dL | 0 to 132 mg/dL | -56.70 mg/dL |
-| `trestbps` | -31 to +19 mmHg | 0 to 31 mmHg | -3.47 mmHg |
-| `cp` | -1 to +2 category levels | 0 to 2 levels | -0.63 |
+| `chol` | -132 to +36 mg/dL | 0 to 132 mg/dL | -56.17 mg/dL |
+| `trestbps` | -31 to +19.5 mmHg | 0 to 31 mmHg | -3.31 mmHg |
+| `cp` | -1 to +2 category levels | 0 to 2 levels | -0.64 |
 | `exang` | -1 to 0 | 0 to 1 | -0.63 |
-| `oldpeak` | -6.13 to +1.07 mm | 0 to 6.13 mm | -1.50 mm |
-| `thalach` | -34 to +67 bpm | 0 to 67 bpm | +16.16 bpm |
+| `oldpeak` | -6.10 to +1.07 mm | 0 to 6.10 mm | -1.49 mm |
+| `thalach` | -34 to +68 bpm | 0 to 68 bpm | +16.30 bpm |
 | `slope` | -2 to 0 category levels | 0 to 2 levels | -1.02 |
-| `restecg` | -2 to 0 category levels | 0 to 2 levels | -0.57 |
+| `restecg` | -2 to 0 category levels | 0 to 2 levels | -0.58 |
 
 `exang`, `slope`, and `restecg` show zero worsening across all successful rows. These reflect the observed true-positive cohort and fitted SCM response under cholesterol-only intervention, validated with the leakage-free pre-fitted SCM (565-row cleaned training split).
 
 ## Sensitivity Analysis
 
-One-at-a-time (OAT) parameter sweeps are supported for `total_cfs`, `trestbps_range`, `chol_lower`, `confidence_level`, `graph_structure`, `intervention_targets`, and `n_samples`. Sensitivity outputs should be regenerated after changing the primary intervention strategy, because the final analysis now uses broad DiCE search followed by cholesterol-only projection and SCM `do(chol)`.
+One-at-a-time (OAT) parameter sweeps are supported for `total_cfs`, `chol_lower`, `confidence_level`, `graph_structure`, and `n_samples`. Sensitivity outputs should be regenerated after changing the primary intervention strategy, because the final analysis now uses broad DiCE search followed by cholesterol-only projection and SCM `do(chol)`.
 
 See `sensitivity_results/sensitivity_report.md` for full comparison tables.
 
