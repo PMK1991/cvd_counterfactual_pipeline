@@ -44,6 +44,45 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("improvement_recourse")
 
 
+# The deployed SCM config (pipeline_config.yaml -> scm). Critically,
+# intervention_targets is 'chol_only' (do(chol) only) — NOT SCMAnalyzer's
+# 'both' default. Used as the fallback when PyYAML / the YAML file is
+# unavailable, so the re-score matches the run even without yaml installed.
+_DEPLOYED_SCM_DEFAULTS = {
+    'graph_structure': 'full',
+    'intervention_targets': 'chol_only',
+    'n_samples': 1000,
+    'fit_seed': 42,
+    'model_dir': 'model',
+}
+
+
+def _load_scm_config() -> dict:
+    """Return the deployed ``scm`` config block.
+
+    Reads pipeline_config.yaml when PyYAML and the file are available;
+    otherwise falls back to ``_DEPLOYED_SCM_DEFAULTS`` (NOT SCMAnalyzer's
+    built-in defaults, whose ``intervention_targets='both'`` would not match
+    the deployed ``chol_only`` run and would corrupt the flip partition).
+    """
+    path = _PROJECT_ROOT / "pipeline_config.yaml"
+    try:
+        import yaml
+    except ImportError:
+        logger.warning(
+            "PyYAML unavailable; falling back to deployed SCM defaults %s",
+            _DEPLOYED_SCM_DEFAULTS,
+        )
+        return dict(_DEPLOYED_SCM_DEFAULTS)
+    if not path.exists():
+        logger.warning(
+            "pipeline_config.yaml not found; falling back to deployed SCM defaults"
+        )
+        return dict(_DEPLOYED_SCM_DEFAULTS)
+    scm_cfg = (yaml.safe_load(path.read_text()) or {}).get('scm', {})
+    return scm_cfg or dict(_DEPLOYED_SCM_DEFAULTS)
+
+
 def _carry_over_denominators(iteration_dir: Path, metrics: dict) -> dict:
     """Reuse the SCM run's per-iteration accounting for comparable rates."""
     src_metrics_file = iteration_dir / "metrics.json"
@@ -72,10 +111,20 @@ def run_recourse(iterations_dir: Path, graph_structure: str,
             f"Run the SCM pipeline first to generate counterfactuals."
         )
 
-    # config=None gives the SCMAnalyzer defaults (incl. n_samples=1000 to match
-    # the original run); only override the graph variant to load.
+    # Start from SCMAnalyzer defaults, then apply the deployed scm config from
+    # pipeline_config.yaml so the re-score uses the SAME intervention the run was
+    # generated under (notably intervention_targets='chol_only', NOT the 'both'
+    # default). Otherwise the re-scored flip partition would not match the run.
     analyzer = RecourseAnalyzer()
-    analyzer.config['graph_structure'] = graph_structure
+    analyzer.config.update(_load_scm_config())
+    if graph_structure:  # explicit CLI override
+        analyzer.config['graph_structure'] = graph_structure
+    logger.info(
+        "SCM re-score config: graph_structure=%s, intervention_targets=%s, n_samples=%s",
+        analyzer.config.get('graph_structure'),
+        analyzer.config.get('intervention_targets'),
+        analyzer.config.get('n_samples'),
+    )
     analyzer.initialize_analyzer()
     metrics_calc = MetricsCalculator()
 
@@ -191,8 +240,9 @@ def main():
         help="Directory holding the completed SCM run's iteration_NNN folders",
     )
     parser.add_argument(
-        "--graph_structure", default="full",
-        help="SCM graph variant to load (must match the run that generated the CFs)",
+        "--graph_structure", default=None,
+        help="SCM graph variant to load. Default: value from pipeline_config.yaml "
+             "(the variant the run was generated under).",
     )
     parser.add_argument("--confidence_level", type=float, default=0.95)
     parser.add_argument(

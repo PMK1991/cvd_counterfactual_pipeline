@@ -307,6 +307,33 @@ Results are saved to `fresh_cf_iterations/aggregated_results/`:
 - `structural_equations.md` / `structural_equations.json` — per-node SCM mechanisms in open form (`X = f(parents) + ε`) and closed form where the auto-assigned estimator allows it; regenerate with `python scripts/dump_structural_equations.py --output_dir fresh_cf_iterations/aggregated_results`
 - `structural_equations_open_closed.md` — longer-form write-up pairing open and closed forms with empirical noise summaries
 
+### 8. Improvement-Focused Recourse (Non-Flip Cohort)
+
+```bash
+python scripts/run_improvement_recourse.py
+```
+
+Re-scores the *same* DiCE counterfactuals from a completed run through the SCM
+under the deployed `do(chol)` intervention, but keeps the CFs that did **not**
+flip the diagnosis (`target` stays 1), asking a softer question: even without
+reversing the label, did the intervention still move downstream symptoms
+(cp, restecg, thalach, exang, slope, oldpeak) in a clinically-beneficial
+direction? The re-score reproduces the run's flip partition exactly (mean 82.9
+flips/iteration, matching the main results above). Results are written to
+`fresh_cf_iterations/aggregated_results_recourse/` (`recourse_summary.md`,
+`summary_report.md`, `ci_results.csv`, `all_iteration_metrics.csv`) plus the
+per-iteration non-flip rows in `iteration_NNN/non_flip_recourse/`.
+
+Over 100 iterations (~155 non-flip CFs/iteration): **any-improvement 100%**,
+**Improvement Recourse Rate** 36.4% strict (≥1 symptom better, none worse) /
+90.3% lenient (≥1 better, net ≥ 0), mean **+1.4** net symptoms improved per CF.
+The continuous symptoms ease (oldpeak −0.52 mm, thalach +10.5 bpm, restecg → normal
+66%) while the categorical disease-severity markers (cp, exang) do not improve
+when the label does not flip — the expected, honest signal. Note the non-flip
+symptom shifts partly reflect resampling toward the `target=1` conditional mean
+(`gcm.interventional_samples` redraws symptom noise), so read them as
+distribution shifts, not abduction-based individual counterfactuals.
+
 ## Dataset
 
 **Source:** Combined heart disease dataset from Statlog, Cleveland, and Hungary databases.
