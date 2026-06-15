@@ -68,7 +68,6 @@ class SCMAnalyzer:
         return {
             'n_samples': 1000,
             'graph_structure': 'full',          # 'minimal', 'full', 'full_with_symptom_links', 'extended'
-            'intervention_targets': 'both',     # 'both', 'chol_only', or 'trestbps_only'
             'fit_seed': 42,                     # Must match the artifact built by train_scm.py --fit-seed
             'model_dir': 'model',               # Where train_scm.py writes scm_<variant>.pkl
         }
@@ -267,6 +266,8 @@ class SCMAnalyzer:
 
         try:
             chol_val = cf_suggestion['chol'].values[0]
+            # trestbps is not intervened (do(chol) only); kept solely to seed the
+            # per patient-CF RNG below for deterministic interventional sampling.
             bp_val = cf_suggestion['trestbps'].values[0]
 
             # Ensure original is a single-row DataFrame with graph columns
@@ -284,16 +285,13 @@ class SCMAnalyzer:
                 if col in orig_row.columns:
                     orig_row[col] = orig_row[col].astype('category')
 
-            # Build intervention dict based on configured targets
-            intervention_targets = self.config.get('intervention_targets', 'both')
-            intervention_dict = {}
-            if intervention_targets in ('both', 'chol_only') and pd.notna(chol_val):
-                intervention_dict['chol'] = lambda _: float(chol_val)
-            if intervention_targets in ('both', 'trestbps_only') and pd.notna(bp_val):
-                intervention_dict['trestbps'] = lambda _: float(bp_val)
-
-            if not intervention_dict:
+            # Cholesterol-only recourse: intervene on chol only — do(chol).
+            # trestbps and all other downstream variables are propagated through
+            # the structural equations (e.g. via the chol -> trestbps edge),
+            # never clamped directly.
+            if not pd.notna(chol_val):
                 return None
+            intervention_dict = {'chol': lambda _: float(chol_val)}
 
             # Fix random seed based on patient features + intervention values
             # for deterministic, reproducible SCM results per patient-CF pair

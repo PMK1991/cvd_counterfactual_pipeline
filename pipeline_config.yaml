@@ -14,7 +14,7 @@ dice:
   data_path: "data/heart_statlog_cleveland_hungary_final.csv"
   method: "genetic"
   total_cfs: 5
-  features_to_vary: null
+  features_to_vary: null   # Unconstrained DiCE search; only chol is range-constrained (see permitted_range). chol-only projection is at the SCM step.
   search_params:
     maxiterations: 500
     thresh: 0.01
@@ -25,14 +25,14 @@ dice:
     posthoc_sparsity_algorithm: "binary"
     posthoc_sparsity_param: 0.1
   permitted_range:
-    trestbps: [100, 120]
-    chol: [150, 200]
+    chol: [150, 200]   # Cholesterol-only intervention corridor
   timeout: 45  # Timeout in seconds for bounded genetic CF search
 
 scm:
   n_samples: 1000  # SCM Monte Carlo samples per intervention
   graph_structure: "full"
-  intervention_targets: "chol_only"
+  # Intervention is always do(chol) only — trestbps and other downstream
+  # variables are propagated through the structural equations, not clamped.
   fit_seed: 42  # Must match the artifact built by train_scm.py --fit-seed
   model_dir: "model"            # Where train_scm.py writes scm_<variant>.pkl
 
@@ -48,7 +48,6 @@ sensitivity:
   n_patients: 10         # Patients per variant
   parameters:            # Parameter grid for OAT sensitivity sweeps
     total_cfs: [3, 5, 7, 10]
-    trestbps_range: [[90, 110], [100, 120], [110, 130], [120, 140]]
     chol_lower: [100, 150, 200]
     confidence_level: [0.90, 0.95, 0.99]  # Post-hoc recomputation only
     graph_structure: ["minimal", "full", "extended"]

@@ -150,6 +150,85 @@ class MetricsCalculator:
             'restecg_mode_after': _safe_mode_int(df['cf_restecg']),
         }
 
+    # ------------------------------------------------------------------
+    # Improvement-focused causal recourse
+    # ------------------------------------------------------------------
+
+    # Downstream symptom variables (children of `target` in the SCM) and the
+    # clinically-beneficial direction of change. These are the variables that
+    # may still improve when an intervention does NOT flip the disease label.
+    # +1 => improvement is an increase; -1 => improvement is a decrease.
+    _SYMPTOM_DIRECTIONS = {
+        'cp': -1,        # less severe chest pain
+        'restecg': -1,   # toward normal resting ECG
+        'thalach': +1,   # higher max heart rate
+        'exang': -1,     # exercise-induced angina 1 -> 0
+        'slope': -1,     # flatter/normal ST slope
+        'oldpeak': -1,   # less ST depression
+    }
+
+    def _symptom_change_counts(self, df: pd.DataFrame):
+        """Per-row counts of improved / worsened downstream symptoms.
+
+        Returns two integer Series (n_improved, n_worsened) aligned with `df`,
+        where each downstream symptom is scored in its clinically-beneficial
+        direction. Symptoms absent from `df` are skipped.
+        """
+        n_improved = pd.Series(0, index=df.index, dtype=int)
+        n_worsened = pd.Series(0, index=df.index, dtype=int)
+
+        for sym, direction in self._SYMPTOM_DIRECTIONS.items():
+            orig_col, cf_col = f'orig_{sym}', f'cf_{sym}'
+            if orig_col not in df.columns or cf_col not in df.columns:
+                continue
+            delta = df[cf_col] - df[orig_col]
+            beneficial = delta * direction  # > 0 => improved, < 0 => worsened
+            n_improved += (beneficial > 0).astype(int)
+            n_worsened += (beneficial < 0).astype(int)
+
+        return n_improved, n_worsened
+
+    def compute_recourse_metrics(self, df: pd.DataFrame) -> Dict:
+        """Improvement-focused recourse metrics over the supplied CF rows.
+
+        Intended for the NON-flip subset (CFs where the SCM left ``target`` at
+        1): quantifies whether downstream symptoms still moved in a beneficial
+        direction. Outcome-agnostic — the caller decides which rows to pass.
+
+        All returned values are scalar numerics so :class:`CIComputer` picks
+        them up for percentile CIs across iterations.
+        """
+        if df is None or len(df) == 0:
+            return {
+                'recourse_n_cfs': 0,
+                'recourse_any_improvement_pct': 0.0,
+                'recourse_irr_strict_pct': 0.0,
+                'recourse_irr_lenient_pct': 0.0,
+                'recourse_mean_n_improved': 0.0,
+                'recourse_mean_n_worsened': 0.0,
+                'recourse_mean_net_improvement': 0.0,
+            }
+
+        n_total = len(df)
+        n_improved, n_worsened = self._symptom_change_counts(df)
+        net = n_improved - n_worsened
+
+        any_improvement = n_improved >= 1
+        # Strict: at least one symptom improved and none worsened.
+        irr_strict = any_improvement & (n_worsened == 0)
+        # Lenient: at least one improved and net effect non-negative.
+        irr_lenient = any_improvement & (net >= 0)
+
+        return {
+            'recourse_n_cfs': n_total,
+            'recourse_any_improvement_pct': any_improvement.sum() / n_total * 100,
+            'recourse_irr_strict_pct': irr_strict.sum() / n_total * 100,
+            'recourse_irr_lenient_pct': irr_lenient.sum() / n_total * 100,
+            'recourse_mean_n_improved': n_improved.mean(),
+            'recourse_mean_n_worsened': n_worsened.mean(),
+            'recourse_mean_net_improvement': net.mean(),
+        }
+
 
 if __name__ == "__main__":
     print("Metrics Calculator Module")

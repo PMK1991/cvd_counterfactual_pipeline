@@ -49,12 +49,6 @@ PARAMETER_GRID = {
         'baseline': 5,
         'label': 'Number of CFs per patient',
     },
-    'trestbps_range': {
-        'config_path': ['dice', 'permitted_range', 'trestbps'],
-        'values': [[90, 110], [100, 120], [110, 130], [120, 140]],
-        'baseline': [100, 120],
-        'label': 'Permitted BP range (mmHg)',
-    },
     'chol_lower': {
         'config_path': ['dice', 'permitted_range', 'chol'],
         'values': [100, 150, 200],
@@ -73,12 +67,6 @@ PARAMETER_GRID = {
         'values': ['minimal', 'full', 'extended'],
         'baseline': 'full',
         'label': 'SCM graph structure',
-    },
-    'intervention_targets': {
-        'config_path': ['scm', 'intervention_targets'],
-        'values': ['chol_only', 'trestbps_only', 'both'],
-        'baseline': 'both',
-        'label': 'SCM intervention targets',
     },
     'n_samples': {
         'config_path': ['scm', 'n_samples'],
