@@ -292,7 +292,7 @@ the acceptance criterion. This is a candidate-filter ablation: because DiCE
 optimised those proposals against the same classifier, the no-SCM rate is a
 **model-only acceptance upper bound**, not an independent validation. Results are
 written to `fresh_cf_iterations/aggregated_results_no_scm/`. The SCM filter is
-~2× more conservative (34.8% vs 66.1% retention); see [`ABLATION_RESULTS.md`](ABLATION_RESULTS.md)
+~2× more conservative (34.8% vs 67.3% retention); see [`ABLATION_RESULTS.md`](ABLATION_RESULTS.md)
 for the full comparison, estimand caveats, and interpretation.
 
 ### 7. View Results

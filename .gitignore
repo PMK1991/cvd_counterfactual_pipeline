@@ -7,16 +7,21 @@ __pycache__/
 fresh_cf_iterations/
 fresh_cf_iterations_test/
 fresh_cf_iterations_cholonly/
+fresh_cf_iterations_run*/
 sensitivity_results/
 fresh_cf_pipeline.log
 *_cholonly.log
 test_mode_cholonly.log
+consistency_run*.log
 counterfactuals/*_counterfactual.csv
 original/
 worked/
 
 # Papers, reviewer comments, and rebuttals
 docs/*.docx
+docs/*.pdf
+r3-response/
+_paper_extract.txt
 
 # Claude Code
 .claude/
