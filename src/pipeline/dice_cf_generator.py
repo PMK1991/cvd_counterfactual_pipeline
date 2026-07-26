@@ -17,6 +17,8 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 import copy
+import random
+import numpy as np
 import pandas as pd
 import dice_ml
 from dice_ml import Data, Model, Dice
@@ -27,6 +29,35 @@ import logging
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Odd multiplier used to spread (iteration, patient) pairs across the seed
+# space without collisions for any realistic cohort size.
+_SEED_STRIDE = 100003
+_SEED_MODULUS = 2 ** 31 - 1
+
+
+def derive_seed(iteration_num: int, patient_id: int, seed_base: int = 42) -> int:
+    """Deterministic RNG seed for one (iteration, patient) pair.
+
+    DiCE 0.11's genetic explainer exposes no ``random_seed`` argument. It draws
+    from **two** global RNGs: NumPy's (``np.random.choice`` / ``np.random.uniform``
+    in population initialisation) and the standard library's (``random.random`` and
+    ``random.choice`` in the crossover/mutation step). Both must be seeded, or the
+    result stays non-deterministic — seeding NumPy alone is not enough, which is
+    easy to get wrong and silently ineffective.
+
+    Seeding **per patient** rather than once per iteration is deliberate. Patients
+    are generated in a sequential loop and the search is time-bounded, so a search
+    that terminates early consumes an unpredictable number of RNG draws. With a
+    single per-iteration seed that would shift the stream for every subsequent
+    patient, letting wall-clock timing leak into the results. Keying the seed on
+    the patient makes each patient independent of what ran before it.
+
+    Distinct iterations still receive distinct seeds, so run-to-run variation —
+    the quantity the algorithmic-stability intervals measure — is preserved. The
+    ensemble as a whole becomes reproducible; it does not become constant.
+    """
+    return (seed_base + iteration_num * _SEED_STRIDE + patient_id) % _SEED_MODULUS
 
 
 class DiceCFGenerator:
@@ -71,6 +102,11 @@ class DiceCFGenerator:
             },
             'timeout': 45,
             'features_to_vary': None,
+            # Deterministic per-(iteration, patient) seeding of both global RNGs
+            # that DiCE's genetic search draws from. Set to False only to
+            # reproduce the legacy unseeded behaviour.
+            'deterministic_seeding': True,
+            'seed_base': 42,
             'search_params': {
                 'maxiterations': 500,
                 'thresh': 0.01,
@@ -136,7 +172,8 @@ class DiceCFGenerator:
     def generate_counterfactuals(
         self,
         patient_data: pd.DataFrame,
-        timeout: Optional[int] = None
+        timeout: Optional[int] = None,
+        seed: Optional[int] = None
     ) -> Optional[dice_ml.counterfactual_explanations.CounterfactualExplanations]:
         """
         Generate counterfactuals for a single patient
@@ -144,6 +181,9 @@ class DiceCFGenerator:
         Args:
             patient_data: DataFrame with single patient row
             timeout: Timeout in seconds (uses config default if None)
+            seed: RNG seed for this call. When provided, both global RNGs (NumPy
+                and stdlib ``random``) are seeded immediately before the genetic
+                search, making the result reproducible. See :func:`derive_seed`.
 
         Returns:
             DiCE CounterfactualExplanations object or None if failed
@@ -152,6 +192,13 @@ class DiceCFGenerator:
             raise ValueError("Must call setup_dice_explainer() first")
 
         timeout = timeout or self.config['timeout']
+
+        # DiCE's genetic explainer reads both global RNGs (NumPy for population
+        # initialisation, stdlib random for crossover/mutation), so both must be
+        # set here rather than passed through as an argument.
+        if seed is not None:
+            np.random.seed(seed)
+            random.seed(seed)
 
         # Prepare permitted range (handle dynamic chol limit)
         # Deep copy required: shallow copy shares inner lists, causing mutation
@@ -257,8 +304,18 @@ class DiceCFGenerator:
         }
 
         try:
+            # Reproducibility: seed the RNG DiCE draws from, keyed on this
+            # (iteration, patient) pair so the search is independent of how long
+            # earlier patients ran. See derive_seed().
+            seed = None
+            if self.config.get('deterministic_seeding', True):
+                seed = derive_seed(
+                    iteration_num, patient_id, self.config.get('seed_base', 42)
+                )
+                result['seed'] = seed
+
             # Generate CFs
-            cf_result = self.generate_counterfactuals(patient_data)
+            cf_result = self.generate_counterfactuals(patient_data, seed=seed)
 
             if (cf_result is not None
                     and cf_result.cf_examples_list
