@@ -37,7 +37,7 @@ dice:
   seed_base: 42
 
 scm:
-  n_samples: 500  # SCM Monte Carlo samples per intervention (reduced from 1000 for resource optimization)
+  n_samples: 1000  # SCM Monte Carlo samples per intervention
   graph_structure: "full"
   # Intervention is always do(chol) only — trestbps and other downstream
   # variables are propagated through the structural equations, not clamped.
