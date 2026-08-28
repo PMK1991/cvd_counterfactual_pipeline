@@ -77,7 +77,7 @@ pip install -r requirements.txt
 Edit `pipeline_config.yaml` to adjust:
 - Number of iterations and test-mode patient cap
 - Number of concurrent workers
-- DiCE parameters (method, total_cfs, permitted_range, timeout)
+- DiCE parameters (method, total_cfs, permitted_range, deterministic_seeding)
 - SCM sampling and graph-structure parameters
 - Optional patient-level bootstrap
 - Confidence interval level
@@ -129,7 +129,7 @@ The pipeline follows a **modular, concurrent architecture** with these independe
 
 2. **`src/pipeline/dice_cf_generator.py`** - DiCE counterfactual generation
    - Uses DiCE-ML genetic algorithm
-   - Thread-safe with timeout support
+   - Deterministically seeded per (iteration, patient) for reproducible search
    - Generates counterfactuals for high-risk patients (target=1)
    - Permits intervention on `trestbps` and `chol` within specified ranges
 
@@ -255,7 +255,8 @@ sensitivity_results/              # Top-level sensitivity analysis output
 
 ### DiCE Configuration
 - **Method**: genetic (more robust than gradient-based for this dataset)
-- **Timeout**: 30 seconds per patient (configurable in pipeline_config.yaml)
+- **Search bound**: DiCE's own `maxiterations` (500) / `stopping_threshold` — there is no wall-clock timeout
+- **Deterministic seeding**: both global RNGs seeded per (iteration, patient); see `derive_seed()`
 - **Features to vary**: `trestbps` and `chol`
 - **Permitted ranges**:
   - `trestbps`: [100, 120] (target healthy BP range)

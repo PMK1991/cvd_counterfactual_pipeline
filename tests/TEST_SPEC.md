@@ -126,8 +126,8 @@ This is the heart of the refactor. Required tests:
 
 ### 3.5 `pipeline/dice_cf_generator.py` — `integration`
 DiCE is stochastic — assert **structure**, not values:
-- Generates exactly `total_cfs` (5) suggestions per patient (or documents fewer on
-  timeout, and the timeout path returns gracefully).
+- Generates exactly `total_cfs` (5) suggestions per patient (or documents fewer when
+  the genetic search converges/exhausts `maxiterations` without filling the set).
 - Every CF varies **only** `trestbps`/`chol`; all other features equal the original row.
 - `trestbps ∈ [100,120]` and `chol ∈ [150,200]` for every CF.
 - The model predicts the desired (low-risk) class on generated CFs (DiCE's own contract).
