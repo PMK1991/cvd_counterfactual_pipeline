@@ -389,7 +389,8 @@ dice:
   features_to_vary: null    # Broad DiCE search (all features)
   permitted_range:
     chol: [150, 200]        # Only chol is range-constrained
-  timeout: 45               # Seconds per patient
+  deterministic_seeding: true  # Seed both global RNGs per (iteration, patient)
+  seed_base: 42
 
 scm:
   n_samples: 1000           # SCM Monte Carlo samples per intervention

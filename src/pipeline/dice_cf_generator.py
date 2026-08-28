@@ -47,11 +47,13 @@ def derive_seed(iteration_num: int, patient_id: int, seed_base: int = 42) -> int
     easy to get wrong and silently ineffective.
 
     Seeding **per patient** rather than once per iteration is deliberate. Patients
-    are generated in a sequential loop and the search is time-bounded, so a search
-    that terminates early consumes an unpredictable number of RNG draws. With a
-    single per-iteration seed that would shift the stream for every subsequent
-    patient, letting wall-clock timing leak into the results. Keying the seed on
-    the patient makes each patient independent of what ran before it.
+    are generated in a sequential loop, and the genetic search stops as soon as it
+    converges (``stopping_threshold``/``thresh``) or hits ``maxiterations``, so the
+    number of RNG draws it consumes varies per patient and per query. With a single
+    per-iteration seed that would shift the stream for every subsequent patient,
+    making each patient's result depend on how the searches before it happened to
+    terminate. Keying the seed on the patient makes each patient independent of
+    what ran before it.
 
     Distinct iterations still receive distinct seeds, so run-to-run variation —
     the quantity the algorithmic-stability intervals measure — is preserved. The
@@ -100,7 +102,6 @@ class DiceCFGenerator:
             'permitted_range': {
                 'chol': [150, 200]
             },
-            'timeout': 45,
             'features_to_vary': None,
             # Deterministic per-(iteration, patient) seeding of both global RNGs
             # that DiCE's genetic search draws from. Set to False only to
@@ -172,15 +173,16 @@ class DiceCFGenerator:
     def generate_counterfactuals(
         self,
         patient_data: pd.DataFrame,
-        timeout: Optional[int] = None,
         seed: Optional[int] = None
     ) -> Optional[dice_ml.counterfactual_explanations.CounterfactualExplanations]:
         """
         Generate counterfactuals for a single patient
 
+        The search is bounded by DiCE's own ``maxiterations``/``stopping_threshold``
+        (see ``search_params``), not by a wall-clock limit.
+
         Args:
             patient_data: DataFrame with single patient row
-            timeout: Timeout in seconds (uses config default if None)
             seed: RNG seed for this call. When provided, both global RNGs (NumPy
                 and stdlib ``random``) are seeded immediately before the genetic
                 search, making the result reproducible. See :func:`derive_seed`.
@@ -190,8 +192,6 @@ class DiceCFGenerator:
         """
         if self.dice_exp is None:
             raise ValueError("Must call setup_dice_explainer() first")
-
-        timeout = timeout or self.config['timeout']
 
         # DiCE's genetic explainer reads both global RNGs (NumPy for population
         # initialisation, stdlib random for crossover/mutation), so both must be

@@ -92,8 +92,8 @@ fresh_cf_iterations/
 **Issue:** Out of memory errors
 - **Solution:** Reduce `--n_workers` to 2-3
 
-**Issue:** DiCE timeouts
-- **Solution:** Increase `timeout` in `pipeline_config.yaml`
+**Issue:** DiCE search is slow or returns fewer CFs than requested
+- **Solution:** Tune `search_params.maxiterations` / `stopping_threshold` in `pipeline_config.yaml`. Note: changing these changes results.
 
 ## Example Workflow
 

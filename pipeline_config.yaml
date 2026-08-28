@@ -26,7 +26,8 @@ dice:
     posthoc_sparsity_param: 0.1
   permitted_range:
     chol: [150, 200]   # Cholesterol-only intervention corridor
-  timeout: 60  # Timeout in seconds for bounded genetic CF search
+  # The genetic search is bounded by search_params.maxiterations /
+  # stopping_threshold above. There is no wall-clock timeout.
   # DiCE 0.11's genetic explainer has no random_seed argument; it draws from BOTH
   # global RNGs (NumPy and stdlib random) -- seeding NumPy alone silently does
   # nothing. Seed them deterministically per (iteration, patient) so the

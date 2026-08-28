@@ -162,8 +162,12 @@ class FreshCFPipeline:
                 'permitted_range': {
                     'chol': [150, 200]
                 },
-                'timeout': 45,
                 'features_to_vary': None,
+                # Deterministic per-(iteration, patient) seeding of both global
+                # RNGs that DiCE's genetic search draws from. Mirrors
+                # DiceCFGenerator._default_config(); keep the two in sync.
+                'deterministic_seeding': True,
+                'seed_base': 42,
                 'search_params': {
                     'maxiterations': 500,
                     'thresh': 0.01,
