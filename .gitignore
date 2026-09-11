@@ -32,3 +32,6 @@ notebooks/
 # IDE
 .vscode/
 .idea/
+
+# Isolated outer-CV experiment (never mixed with published baseline output)
+kfold_runs/

@@ -4,6 +4,114 @@ A reproducible pipeline for generating and validating counterfactual explanation
 
 ## Research Context
 
+### Isolated five-fold reviewer experiment
+
+The new `scripts\run_kfold_recourse.py` runs **prespecified stratified outer
+five-fold CV, not nested CV**: no tuning or inner folds. It does not reuse or
+overwrite the legacy 80/20 models or published result files. Use an isolated
+Python 3.11 environment with `requirements-kfold.txt`; legacy requirements are
+unchanged.
+
+```powershell
+# From this repository, with the isolated environment's interpreter:
+python -m pip install -r requirements-kfold.txt
+python -m unittest discover -s tests -p test_kfold_recourse.py -v
+# Classifier-only preflight: all OOF TP encodings and actual genetic predictions
+python scripts\run_kfold_recourse.py preflight --output kfold_runs\primary_seed42
+python scripts\run_kfold_recourse.py prepare --output kfold_runs\primary_seed42
+# Pilot: first two held-out TPs per fold, first two repeats, same full-run manifest
+python scripts\run_kfold_recourse.py run --output kfold_runs\primary_seed42 --patients-per-fold 2 --repeats 2 --workers 4
+python scripts\run_kfold_recourse.py summary --output kfold_runs\primary_seed42
+# Full run / resume: skips validated completed attempts, fills all remaining repeats
+python scripts\run_kfold_recourse.py run --output kfold_runs\primary_seed42 --workers 4
+```
+
+**Population and leakage controls.** Fixed complete-case eligibility,
+`chol > 0`, `trestbps > 0`, and full-row exact deduplication precede splitting.
+For each outer fold, target-specific 1.5-IQR fences are fitted/applied sequentially
+to cholesterol and blood pressure **only in training**. Validation retains every
+eligible held-out row, including outliers; its labels never drive filtering.
+Consequently this evaluation population differs from the globally filtered
+707-row published population, and the earlier 287-TP CV estimate is not an
+observed cohort size for this experiment. Zero-based CSV source row indices
+survive all stages and never enter model/DiCE features. They identify records,
+not verified patients: patient/site identifiers are unavailable, so residual
+same-person duplicates and site overlap cannot be ruled out.
+
+Each fold independently fits the fixed baseline XGBoost hyperparameters (seed
+42, one estimator thread), scaler/encoder, and fresh SCM on the **identical
+filtered training rows**; only these rows form DiCE's reference distribution.
+SCM auto-assignment is training-only. Full-run defaults are read from
+`pipeline_config.yaml`: 100 repeats, five genetic DiCE proposals, 500 search
+iterations, existing search weights, cholesterol 150–200, broad feature search,
+full SCM graph, 1,000 samples, and configured seeds (42 by default).
+Workers are native Windows processes, bounded to four, with numerical
+thread pools limited to one. `prepare` trains folds sequentially.
+
+The experiment's opt-in DiCE adapter converts **every** search, KD-tree and
+post-hoc model input back to native numeric feature codes before prediction.
+It also preserves float64 input precision: DiCE's default string categories and
+float32 conversion can otherwise change predictions relative to the fitted
+classifier. The legacy generator/model semantics are unchanged.
+Encoding uses a predeclared schema (`sex`, `fbs`, `exang`: 0–1;
+`cp`: 1–4; `restecg`: 0–2; `slope`: 0–3). A factual `slope=0`
+unknown code is preserved, even when absent from fold training.
+Schema-only categorical levels align label encoders and KD-tree dummy columns;
+**no synthetic observations or held-out rows** enter the reference data.
+Proposal sampling categories remain those observed in training, independently
+of schema-supported factual categories. Target class is explicitly 0.
+`preflight` fits only ephemeral classifiers (no SCM or recourse search), checking
+every OOF TP's schema/round trip, actual genetic prediction probabilities,
+KD-tree compatibility and training-reference predictions. `prepare` performs
+this all-fold check before fitting any SCM; `run` repeats it using the saved
+classifiers before starting any repeats. Checksum-protected preflight reports
+are retained alongside the manifest.
+
+**Endpoints and denominators.** Classifier OOF metrics include all eligible
+validation rows. Recourse is conditional on held-out true positives (target=1
+and fold classifier prediction=1); false negatives are excluded and reported
+in classifier metrics. Every such record-repeat remains in the denominator,
+including generation returning no CF. Three distinct primary endpoints are
+at least one proposal with (1) SCM target=0, (2) the same fold's XGBoost
+prediction=0 after SCM propagation, and (3) **both on the same proposal**.
+Raw DiCE classifier flips are a separate diagnostic. The unchanged propagation
+mechanism clamps only `chol`, using the original record, not all proposed
+features; it retains existing constraints and categorical-mode/continuous-median
+aggregation. This is broad DiCE followed by a cholesterol-only intervention,
+not a matched cholesterol-only search ablation or a clinical benefit score.
+Chest-pain categories are not interpreted as ordinal improvements.
+
+Each record's mean over 100 repeats is pooled with equal record weight.
+`summary.json` reports counts, per-fold descriptive results, conditional
+candidate-level rates (returned proposals are a separate denominator), and
+95% percentile record-cluster bootstrap intervals conditional on the fitted
+folds. These are **not full model-training uncertainty**, and no tiny-five-fold
+t interval is computed. Partial pilots report completed-attempt descriptive
+rates but withhold full primary estimates and intervals. The summary distinguishes
+expected/completed/attempted/pending/error attempts; `oof_predictions.csv` and
+`record_means.csv` provide record-level tables.
+
+**Audit/resume.** `kfold_runs` is ignored by Git. Immutable completed fold
+artifacts include train/validation snapshots, IDs, fences, classifier/SCM
+pickles, hashes, and OOF predictions. Each record-repeat atomically checkpoints
+all raw proposals, propagated vectors, endpoint flags, IDs, seed and timing.
+An exact known DiCE no-CF exception is a zero-proposal outcome; unexpected
+exceptions write audit evidence under `errors` and abort, never become zero
+successes. Inspect and fix the cause before `--retry-errors`; code/config changes
+require a **new output directory**. Completed retries retain historical error
+evidence without double counting.
+
+Manifest checks reject any changed configuration, relevant source code, input
+data, Python or installed package versions. Fold artifact and checkpoint
+checksums detect corruption; duplicated/noncanonical attempt files are rejected.
+Interrupted `.partial` files are reported and never counted; unfinished folds
+are retrained on `prepare`, unfinished attempts rerun. `RUN.lock` prevents
+concurrent use of the same output directory, including summaries. After a hard
+kill, explicitly verify that the recorded PID and all its workers have stopped
+before manually removing the stale lock; it is never silently ignored. Pickles
+are trusted local experiment artifacts only. Keep source/environment fixed
+between preparation, pilot, full run and resume.
+
 Counterfactual explanations answer: *"What minimal changes to a patient's clinical profile would flip their CVD risk prediction from high-risk to low-risk?"*
 
 This pipeline addresses a key challenge: counterfactual generators like DiCE produce statistically valid but not necessarily **causally plausible** explanations. The final analysis lets DiCE search broadly under fixed `chol` and `trestbps` ranges, then validates each candidate through an SCM that intervenes on `chol` and propagates the effect through a cardiovascular DAG.

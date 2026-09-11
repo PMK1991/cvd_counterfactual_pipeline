@@ -120,8 +120,8 @@ class DiceCFGenerator:
             },
         }
 
-    def load_model_and_data(self) -> None:
-        """Load trained model and prepare data for DiCE"""
+    def load_model_and_data(self, training_data: Optional[pd.DataFrame] = None) -> None:
+        """Load the model; explicit training_data bypasses legacy global cleaning."""
         try:
             # Load model
             with open(self.model_path, 'rb') as f:
@@ -129,11 +129,14 @@ class DiceCFGenerator:
             logger.info(f"Loaded model from {self.model_path}")
 
             # Load and clean data (same preprocessing as model training)
-            from src.utils.dataLoader import DataLoader
-            loader = DataLoader(self.data_path)
-            df = loader.load_data()
-            if df is not None:
-                df = loader.remove_outliers_iqr(df)
+            if training_data is None:
+                from src.utils.dataLoader import DataLoader
+                loader = DataLoader(self.data_path)
+                df = loader.load_data()
+                if df is not None:
+                    df = loader.remove_outliers_iqr(df)
+            else:
+                df = training_data.copy()
             logger.info(f"Loaded data from {self.data_path}: {len(df)} rows")
 
             # Prepare DiCE data object
@@ -173,7 +176,9 @@ class DiceCFGenerator:
     def generate_counterfactuals(
         self,
         patient_data: pd.DataFrame,
-        seed: Optional[int] = None
+        seed: Optional[int] = None,
+        strict: bool = False,
+        desired_class="opposite",
     ) -> Optional[dice_ml.counterfactual_explanations.CounterfactualExplanations]:
         """
         Generate counterfactuals for a single patient
@@ -186,6 +191,7 @@ class DiceCFGenerator:
             seed: RNG seed for this call. When provided, both global RNGs (NumPy
                 and stdlib ``random``) are seeded immediately before the genetic
                 search, making the result reproducible. See :func:`derive_seed`.
+            strict: Propagate generation exceptions instead of returning None.
 
         Returns:
             DiCE CounterfactualExplanations object or None if failed
@@ -213,7 +219,7 @@ class DiceCFGenerator:
             kwargs = dict(
                 query_instances=patient_data,
                 total_CFs=self.config['total_cfs'],
-                desired_class='opposite',
+                desired_class=desired_class,
                 permitted_range=permitted_range,
             )
             if self.config.get('features_to_vary') is not None:
@@ -224,6 +230,8 @@ class DiceCFGenerator:
             cf_result = self.dice_exp.generate_counterfactuals(**kwargs)
             return cf_result
         except Exception as e:
+            if strict:
+                raise
             logger.warning(f"DiCE generation failed: {e}")
             return None
 
