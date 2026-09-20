@@ -21,10 +21,12 @@ import random
 import numpy as np
 import pandas as pd
 import dice_ml
-from dice_ml import Data, Model, Dice
+from dice_ml import Model
 import pickle
 from typing import List, Dict, Optional, Tuple
 import logging
+
+from src.pipeline.dice_compat import NativeNumericClassifier, SchemaDiceGenetic, SchemaPublicData
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -139,15 +141,7 @@ class DiceCFGenerator:
                 df = training_data.copy()
             logger.info(f"Loaded data from {self.data_path}: {len(df)} rows")
 
-            # Prepare DiCE data object
-            self.dice_data = Data(
-                dataframe=df,
-                continuous_features=['age', 'trestbps', 'chol', 'thalach', 'oldpeak'],
-                outcome_name='target'
-            )
-
-            # Prepare DiCE model object
-            self.dice_model = Model(model=self.model, backend='sklearn')
+            self._prepare_dice_data(df)
 
             logger.info("Successfully prepared DiCE data and model objects")
 
@@ -155,17 +149,20 @@ class DiceCFGenerator:
             logger.error(f"Error loading model and data: {e}")
             raise
 
+    def _prepare_dice_data(self, reference_data: pd.DataFrame) -> None:
+        self.dice_data = SchemaPublicData(reference_data)
+        adapter = NativeNumericClassifier(self.model, self.dice_data.feature_names)
+        self.dice_model = Model(model=adapter, backend='sklearn')
+
     def setup_dice_explainer(self) -> None:
         """Setup DiCE explainer"""
         try:
             if self.dice_data is None or self.dice_model is None:
                 raise ValueError("Must call load_model_and_data() first")
 
-            self.dice_exp = Dice(
-                self.dice_data,
-                self.dice_model,
-                method=self.config['method']
-            )
+            if self.config['method'] != 'genetic':
+                raise ValueError("Schema-compatible CVD generation supports DiCE genetic only")
+            self.dice_exp = SchemaDiceGenetic(self.dice_data, self.dice_model)
 
             logger.info(f"DiCE explainer setup with method: {self.config['method']}")
 

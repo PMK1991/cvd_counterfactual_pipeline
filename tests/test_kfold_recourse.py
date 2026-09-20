@@ -252,6 +252,133 @@ class FoldDiceCompatibilityTests(ScratchTest):
             generator.dice_data.prepare_query_instance(changed)
 
 
+class OrdinaryDiceCompatibilityTests(ScratchTest):
+    def setUp(self):
+        super().setUp()
+        from src.training.train_model import build_xgb_pipeline
+        self.training = fixture_data()
+        self.features = self.training.columns.drop("target").tolist()
+        self.model = build_xgb_pipeline(
+            self.training[self.features], {"n_estimators": 5, "n_jobs": 1})
+        self.model.fit(self.training[self.features], self.training.target)
+        self.model_path = self.scratch / "classifier.pkl"
+        self.model_path.write_bytes(pickle.dumps(self.model))
+
+    def load_generator(self):
+        from src.pipeline.dice_cf_generator import DiceCFGenerator
+        generator = DiceCFGenerator(str(self.model_path), "reference.csv")
+        # Exercise the ordinary loader without changing its historical cleaning.
+        with patch("src.utils.dataLoader.DataLoader") as loader:
+            loader.return_value.load_data.return_value = self.training.copy()
+            loader.return_value.remove_outliers_iqr.return_value = self.training.copy()
+            generator.load_model_and_data()
+            loader.assert_called_once_with("reference.csv")
+            loader.return_value.remove_outliers_iqr.assert_called_once()
+        generator.setup_dice_explainer()
+        return generator
+
+    def test_ordinary_loader_uses_shared_adapter_and_matches_native_predictions(self):
+        from src.pipeline.dice_compat import (
+            CATEGORICAL_SCHEMA, NativeNumericClassifier, SchemaPublicData, SchemaDiceGenetic,
+        )
+        generator = self.load_generator()
+        self.assertIsInstance(generator.dice_data, SchemaPublicData)
+        self.assertIsInstance(generator.dice_exp, SchemaDiceGenetic)
+        adapter = generator.dice_model.model
+        self.assertIsInstance(adapter, NativeNumericClassifier)
+        numeric = self.training[self.features]
+        text = numeric.copy()
+        for column in CATEGORICAL_SCHEMA:
+            text[column] = text[column].astype(str)
+        for values in (numeric, text, text.to_numpy()):
+            with self.subTest(input_type=type(values)):
+                np.testing.assert_array_equal(adapter.predict(values), self.model.predict(numeric))
+                np.testing.assert_array_equal(adapter.predict_proba(values),
+                                              self.model.predict_proba(numeric))
+        np.testing.assert_array_equal(adapter.classes_, self.model.classes_)
+        np.testing.assert_array_equal(
+            generator.dice_model.get_output(text), self.model.predict_proba(numeric))
+        _, tree, predictions = generator.dice_exp.build_KD_tree(
+            generator.dice_data.data_df.copy(), None, 0, "target_pred")
+        np.testing.assert_array_equal(predictions, self.model.predict(numeric))
+
+    def test_unknown_factual_round_trip_preserves_reference_and_sampling_domain(self):
+        generator = self.load_generator()
+        original = self.training.iloc[[0]][self.features].copy()
+        original["slope"] = 0
+        original["oldpeak"] = 0.123456789123
+        reference_before = generator.dice_data.data_df.copy(deep=True)
+        ranges_before = copy.deepcopy(generator.dice_data.get_features_range()[0])
+        exp = generator.dice_exp
+        exp.setup("all", {"chol": [150, 200]}, original, "inverse_mad")
+        prepared = generator.dice_data.prepare_query_instance(original)
+        encoded = exp.label_encode(prepared.copy()).to_numpy()
+        decoded = exp.label_decode(encoded)
+        self.assertEqual(decoded.slope.iloc[0], "0")
+        self.assertEqual(decoded.oldpeak.iloc[0], original.oldpeak.iloc[0])
+        np.testing.assert_array_equal(exp.predict_fn_scores(encoded),
+                                      self.model.predict_proba(original))
+        allowed = exp.labelencoder["slope"].inverse_transform(
+            exp.get_valid_feature_range()["slope"])
+        self.assertNotIn("0", allowed)
+        self.assertEqual(generator.dice_data.get_features_range()[0], ranges_before)
+        pd.testing.assert_frame_equal(generator.dice_data.data_df, reference_before)
+        self.assertEqual(reference_before.index.tolist(), self.training.index.tolist())
+        for column in self.training:
+            np.testing.assert_array_equal(
+                pd.to_numeric(reference_before[column]), self.training[column])
+        _, tree, _ = exp.build_KD_tree(reference_before.copy(), None, 0, "target_pred")
+        dummies = pd.get_dummies(prepared)
+        self.assertEqual(dummies.columns.tolist(),
+                         list(generator.dice_data.get_all_dummy_colnames()))
+        if tree is not None:
+            tree.query(dummies, k=1)
+
+    def test_ordinary_generation_keeps_native_opposite_target_and_search_settings(self):
+        generator = self.load_generator()
+        original = self.training.iloc[[0]][self.features].copy()
+        original["slope"] = 0
+        config_before = copy.deepcopy(generator.config)
+
+        class StopBeforeSearch(Exception):
+            pass
+
+        with patch.object(generator.dice_exp, "do_param_initializations",
+                          side_effect=StopBeforeSearch) as stop:
+            with self.assertRaises(StopBeforeSearch):
+                generator.generate_counterfactuals(original, seed=42, strict=True)
+        np.testing.assert_array_equal(generator.dice_exp.test_pred,
+                                      self.model.predict_proba(original))
+        self.assertEqual(stop.call_args.args[3], 1 - self.model.predict(original)[0])
+        self.assertEqual(generator.config, config_before)
+
+    def test_invalid_categories_and_nonfinite_predictions_are_rejected(self):
+        generator = self.load_generator()
+        original = self.training.iloc[[0]][self.features].copy()
+        for value in (99, 1.5, "invalid"):
+            with self.subTest(slope=value):
+                invalid = original.copy()
+                invalid["slope"] = value
+                with self.assertRaises(ValueError):
+                    generator.dice_data.prepare_query_instance(invalid)
+                with self.assertRaises(ValueError):
+                    generator.dice_model.model.predict_proba(invalid)
+        for value in (np.nan, np.inf):
+            invalid = original.copy()
+            invalid["chol"] = value
+            with self.assertRaisesRegex(ValueError, "Non-finite"):
+                generator.dice_model.model.predict_proba(invalid)
+
+    def test_unsupported_method_is_explicit_not_uncorrected_fallback(self):
+        generator = self.load_generator()
+        generator.config["method"] = "random"
+        with self.assertRaisesRegex(ValueError, "genetic only"):
+            generator.setup_dice_explainer()
+
+    def test_shared_source_is_included_in_future_manifest_hashes(self):
+        self.assertIn("src/pipeline/dice_compat.py", cv.SOURCE_FILES)
+
+
 class PersistenceTests(ScratchTest):
     def test_atomic_checkpoint_and_corruption_detection(self):
         path = self.scratch / "record.json"

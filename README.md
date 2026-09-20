@@ -48,18 +48,31 @@ full SCM graph, 1,000 samples, and configured seeds (42 by default).
 Workers are native Windows processes, bounded to four, with numerical
 thread pools limited to one. `prepare` trains folds sequentially.
 
-The experiment's opt-in DiCE adapter converts **every** search, KD-tree and
+The shared DiCE adapter (`src\pipeline\dice_compat.py`) converts **every** search, KD-tree and
 post-hoc model input back to native numeric feature codes before prediction.
 It also preserves float64 input precision: DiCE's default string categories and
 float32 conversion can otherwise change predictions relative to the fitted
-classifier. The legacy generator/model semantics are unchanged.
+classifier. Both the ordinary `DiceCFGenerator` and the fold generator now use
+this correction by default. The schema-compatible path supports the configured
+`genetic` method; other methods raise an explicit error rather than silently
+using an uncorrected path. Classifier fitting and the ordinary generator's
+reference-data selection are unchanged.
 Encoding uses a predeclared schema (`sex`, `fbs`, `exang`: 0–1;
 `cp`: 1–4; `restecg`: 0–2; `slope`: 0–3). A factual `slope=0`
 unknown code is preserved, even when absent from fold training.
 Schema-only categorical levels align label encoders and KD-tree dummy columns;
 **no synthetic observations or held-out rows** enter the reference data.
 Proposal sampling categories remain those observed in training, independently
-of schema-supported factual categories. Target class is explicitly 0.
+of schema-supported factual categories. The fold target class is explicitly 0;
+the ordinary generator retains its `opposite` default.
+
+These code corrections do not revise saved experimental outputs or establish
+their effect on historical success rates. Preserve completed outputs, including
+`kfold_runs\primary_seed42`, and use a new output directory for any separately
+authorized rerun. The completed run remains tied to its original manifest and
+source commit; changed source hashes intentionally prevent resuming it with
+this revised code.
+
 `preflight` fits only ephemeral classifiers (no SCM or recourse search), checking
 every OOF TP's schema/round trip, actual genetic prediction probabilities,
 KD-tree compatibility and training-reference predictions. `prepare` performs

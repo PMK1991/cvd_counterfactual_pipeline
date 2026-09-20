@@ -34,7 +34,7 @@ SOURCE_FILES = (
     "scripts/run_kfold_recourse.py", "src/training/train_model.py",
     "src/training/train_scm.py", "src/pipeline/dice_cf_generator.py",
     "src/pipeline/scm_analyzer.py", "src/utils/dataLoader.py",
-    "src/pipeline/kfold_dice.py",
+    "src/pipeline/kfold_dice.py", "src/pipeline/dice_compat.py",
     "requirements-kfold.txt",
 )
 
