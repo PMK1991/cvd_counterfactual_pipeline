@@ -10,7 +10,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from measure_original_dice_compat import (
     ROOT, ENDPOINTS, load_inputs, sha, write_json, SCMAnalyzer, threadpool_limits,
-    pd, np,
+    pd, np, read_attempts, attempt_state, completion_status,
 )
 
 
@@ -91,64 +91,57 @@ def historical(output):
 
 
 def check(output):
-    rows = []
-    for arm in ("legacy", "corrected"):
-        for path in sorted((output / "attempts" / arm).glob("*.json")):
-            r = json.loads(path.read_text())
-            assert r["arm"] == arm
-            assert len(r["candidates"]) == r["returned"] <= r["requested"]
-            for i, c in enumerate(r["candidates"]):
-                assert c["proposal_id"] == i
-                if c["scm_error"] is None:
-                    expected = {
-                        "raw_flip": c["raw_prediction"] == 0,
-                        "scm_accept": r["saved_factual"]["target"] == 1 and c["scm_target"] == 0,
-                        "propagated_flip": c["propagated_prediction"] == 0,
-                        "joint": r["saved_factual"]["target"] == 1 and c["scm_target"] == 0
-                                 and c["propagated_prediction"] == 0,
-                    }
-                    assert c["flags"] == expected
-                assert 150 <= c["raw"]["chol"] <= 200
-            for e in ENDPOINTS:
-                assert r["counts"][e] == sum(c["flags"][e] for c in r["candidates"])
-                assert r["any"][e] == (r["counts"][e] > 0)
-            rows.append({
-                "arm": arm, "iteration": r["iteration"], "record_id": r["record_id"],
-                "status": r["status"], "error": r["error"], "returned": r["returned"],
-                "desired_class": r.get("desired_class"), "seconds": r["seconds"],
-                **{e: r["counts"][e] for e in ENDPOINTS},
-                **{"any_" + e: int(r["any"][e]) for e in ENDPOINTS},
-            })
-    df = pd.DataFrame(rows)
+    records = read_attempts(output)
+    rows = [{
+        "arm": r["arm"], "iteration": r["iteration"], "record_id": r["record_id"],
+        "status": r["status"], "error": r["error"], "returned": r["returned"],
+        "desired_class": r.get("desired_class"), "seconds": r["seconds"],
+        "state": attempt_state(r),
+        "scm_errors": sum(c["scm_error"] is not None for c in r["candidates"]),
+        **{e: r["counts"][e] for e in ENDPOINTS},
+        **{"any_" + e: int(r["any"][e]) for e in ENDPOINTS},
+    } for r in records]
+    df = pd.DataFrame(rows, columns=["arm", "iteration", "record_id", "status", "error", "returned",
+                                    "desired_class", "seconds", "state", "scm_errors",
+                                    *ENDPOINTS, *("any_" + e for e in ENDPOINTS)])
+    df = df.astype({column: "int64" for column in ("returned", *ENDPOINTS)})
     result = {"validated_attempts": len(df), "arms": {}, "paired_attempt_contrasts": {}}
     plan = json.loads((output / "run_plan.json").read_text())
-    expected = {(a, rep, rid) for a in ("legacy", "corrected")
-                for rep in range(plan["repeats"]) for rid in plan["record_ids"]}
-    actual = set(zip(df.arm, df.iteration, df.record_id))
-    result["expected_attempts"] = len(expected)
-    result["complete"] = expected == actual and len(df) == len(expected)
-    result["missing_attempts"] = len(expected - actual)
-    result["unexpected_attempts"] = len(actual - expected)
+    result.update(completion_status(records, plan))
     manifest = json.loads((output / "manifest.json").read_text())
-    provenance = json.loads((output / "artifact_provenance.json").read_text())
+    provenance_path = output / "artifact_provenance.json"
+    if not provenance_path.exists():
+        raise RuntimeError("Missing audit artifact provenance; use a new audited directory.")
+    provenance = json.loads(provenance_path.read_text())
+    if not provenance.get("current_artifact_hashes"):
+        raise RuntimeError("Empty artifact provenance; use a new audited directory.")
     result["changed_sources"] = [p for p, h in manifest["source_hashes"].items()
-                                 if sha(ROOT / p) != h]
+                                 if not (ROOT / p).is_file() or sha(ROOT / p) != h]
     result["changed_artifact_references"] = [
-        p for p, h in provenance["current_artifact_hashes"].items() if sha(ROOT / p) != h]
-    for arm, group in df.groupby("arm"):
+        p for p, h in provenance["current_artifact_hashes"].items()
+        if not (ROOT / p).is_file() or sha(ROOT / p) != h]
+    for arm in ("legacy", "corrected"):
+        observed = df[df.arm == arm]
+        group = observed[observed.state == "completed"]
         repeat = group.groupby("iteration")[["returned", *ENDPOINTS]].sum()
+        valid_repeat = repeat[repeat.returned > 0]
         result["arms"][arm] = {
-            "statuses": group.status.value_counts().to_dict(),
-            "errors": group.error.dropna().value_counts().to_dict(),
+            "statuses": observed.status.value_counts().to_dict(),
+            "errors": observed.error.dropna().value_counts().to_dict(),
+            "scm_errors": int(observed.scm_errors.sum()),
             "returned_histogram": group.returned.value_counts().sort_index().to_dict(),
             "opposite_target_histogram": group.desired_class.value_counts().to_dict(),
-            "mean_repeat_SCM_acceptance_pct": float((repeat.scm_accept / repeat.returned).mean() * 100),
-            "seconds_total": float(group.seconds.sum()),
-            "seconds_max": float(group.seconds.max()),
-            "no_cf_count": int((group.returned == 0).sum()),
+            "mean_repeat_SCM_acceptance_pct": (
+                float((valid_repeat.scm_accept / valid_repeat.returned).mean() * 100)
+                if len(valid_repeat) and result["complete"] else None),
+            "valid_repeat_SCM_rates": len(valid_repeat),
+            "undefined_repeat_SCM_rates": len(repeat) - len(valid_repeat),
+            "repeat_rate_interpretation": "Conditional mean over positive-denominator repeats; only emitted for a complete error-free plan",
+            "seconds_total": float(observed.seconds.sum()),
+            "seconds_max": float(observed.seconds.max()) if len(observed) else None,
+            "no_cf_count": int((group.status == "no_cf").sum()),
         }
-    if df.groupby(["iteration", "record_id"]).arm.nunique().eq(2).all():
-        assert not df.duplicated(["arm", "iteration", "record_id"]).any()
+    if result["complete"] and not result["changed_sources"] and not result["changed_artifact_references"]:
         num = df.groupby(["arm", "record_id"])[["any_" + e for e in ENDPOINTS]].mean()
         ids = sorted(df.record_id.unique())
         boot = np.random.default_rng(20260912).integers(0, len(ids), (10000, len(ids)))
@@ -165,7 +158,7 @@ def check(output):
     write_json(output / "endpoint_validation.json", result)
     print(json.dumps(result, indent=2))
     if not result["complete"]:
-        raise RuntimeError("Measurement is incomplete; see endpoint_validation.json")
+        raise RuntimeError("Measurement is incomplete or contains failed attempts; see endpoint_validation.json")
     if result["changed_sources"] or result["changed_artifact_references"]:
         raise RuntimeError("Source or artifact reference changed during measurement")
 

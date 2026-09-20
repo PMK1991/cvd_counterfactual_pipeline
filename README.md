@@ -4,6 +4,43 @@ A reproducible pipeline for generating and validating counterfactual explanation
 
 ## Research Context
 
+### Frozen-original-model paired adapter measurement
+
+`scripts\measure_original_dice_compat.py` compares the pinned legacy generator
+with the shared adapter using the original frozen classifier and SCM (no
+retraining). It needs the original artifacts and published archive locally.
+For a **separately authorized new measurement**, use a new, empty directory:
+
+```powershell
+python scripts\measure_original_dice_compat.py audit --output measurements\new_paired_run
+python scripts\measure_original_dice_compat.py run --output measurements\new_paired_run --repeats 100 --records all --workers 4
+python scripts\validate_original_dice_measurement.py check --output measurements\new_paired_run
+python scripts\measure_original_dice_compat.py verify --output measurements\new_paired_run
+```
+
+Audit creates both source and artifact provenance; no manual sidecar is needed.
+Run/check verify the recorded references. Changed source hashes intentionally
+prevent resuming historical runs with revised code. Failed or pending
+checkpoints are preserved and block resume; investigate the error, then use a
+new audited directory rather than overwriting evidence. Valid `ok`/`no_cf`
+checkpoints can be resumed. Unexpected generation/SCM errors never count as
+unsuccessful recourse outcomes, and incomplete/error-containing plans suppress
+primary paired contrasts. Partial arm rates are explicitly descriptive.
+
+DiCE receives feature-only queries. The saved factual's outcome for SCM
+validation is the cohort label, not DiCE's predicted outcome. Both pinned and
+current generators support strict exceptions; only DiCE's exact known
+no-counterfactual exception is translated into `no_cf`.
+
+Zero-proposal attempts remain valid zero outcomes for attempt-level endpoints.
+Candidate rates with zero returned proposals are undefined (`null`), not zero.
+Candidate bootstrap intervals use paired record-cluster draws with positive
+denominators in **both** arms; valid/excluded draw counts and the conditional
+interpretation are reported, with `null` bounds if no draw is valid.
+Repeat-level SCM means are conditional on positive-denominator repeats and
+report valid/undefined repeat counts. These safeguards do not rewrite or
+re-estimate saved historical results.
+
 ### Isolated five-fold reviewer experiment
 
 The new `scripts\run_kfold_recourse.py` runs **prespecified stratified outer
