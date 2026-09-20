@@ -249,17 +249,19 @@ class SCMAnalyzer:
         self,
         original: pd.DataFrame,
         cf_suggestion: pd.DataFrame,
+        strict: bool = False,
     ) -> Optional[pd.DataFrame]:
         """
         Apply SCM intervention to validate a counterfactual.
 
-        Intervenes on chol (and optionally trestbps) using the
+        Intervenes on chol only using the
         CF-suggested values, then propagates through the causal graph.
         Uses a fixed random seed derived from patient features for
         deterministic, reproducible results per patient.
 
         Returns a single-row DataFrame with orig_* and cf_* columns
         compatible with MetricsCalculator, or None on failure.
+        With strict=True, invalid input and propagation errors raise instead.
         """
         if self.causal_model is None:
             raise ValueError("Must call initialize_analyzer() first")
@@ -290,6 +292,8 @@ class SCMAnalyzer:
             # the structural equations (e.g. via the chol -> trestbps edge),
             # never clamped directly.
             if not pd.notna(chol_val):
+                if strict:
+                    raise ValueError("Non-finite cholesterol intervention")
                 return None
             intervention_dict = {'chol': lambda _: float(chol_val)}
 
@@ -356,6 +360,8 @@ class SCMAnalyzer:
             return pd.DataFrame([result])
 
         except Exception as e:
+            if strict:
+                raise
             logger.debug(f"SCM intervention failed: {e}")
             return None
 

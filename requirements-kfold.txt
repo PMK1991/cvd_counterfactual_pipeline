@@ -1,0 +1,13 @@
+# Isolated Python 3.11 environment; does not replace legacy requirements.txt.
+numpy==1.26.4
+pandas==1.5.3
+scikit-learn==1.6.1
+dowhy==0.12
+dice-ml==0.11
+xgboost==3.0.5
+networkx==3.4.2
+matplotlib==3.9.3
+scipy==1.17.1
+PyYAML==6.0.3
+tqdm==4.70.0
+threadpoolctl==3.6.0
