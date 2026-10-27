@@ -35,3 +35,5 @@ notebooks/
 
 # Isolated outer-CV experiment (never mixed with published baseline output)
 kfold_runs/
+measurements/intervention_responsiveness_20261027/
+measurements/intervention_responsiveness_20261027_interrupted_uncached/
