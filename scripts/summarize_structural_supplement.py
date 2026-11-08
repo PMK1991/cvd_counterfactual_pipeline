@@ -7,8 +7,12 @@ Regenerates, from the saved outputs of run_simulation_diagnostics.py --structura
      mg/dL) using pooled matched-noise Monte Carlo probabilities;
   3. historical record-level acceptance counts (never / every repeat);
   4. a frozen-versus-refit comparison of automatically selected mechanisms;
-  5. an INFERRED source composition of the pooled file (row-order hypothesis
-     checked against source-specific signatures). Inferred, not verified.
+  5. the source composition of the pooled file. The block boundaries below were
+     checked against the original UCI files (processed.hungarian/.switzerland/
+     .va/.cleveland.data and statlog heart.dat) on age, sex, cp, target and
+     thalach: VA, Statlog and Cleveland match row-for-row in order, and the
+     Hungarian and Switzerland blocks match as multisets (Hungarian rows are in a
+     different order from the UCI processed file).
 
 Usage (repository root):
   python scripts/summarize_structural_supplement.py \
@@ -26,9 +30,9 @@ import pandas as pd
 
 CORRIDOR = ("absolute_150", "absolute_175", "absolute_200")
 ABSOLUTE = tuple(f"absolute_{v}" for v in range(100, 301, 25))
-# Inferred row order of the distributed pooled file (see section 5).
+# Row blocks of the distributed pooled file, verified against the UCI source files (see section 5).
 SOURCE_BLOCKS = (("Hungarian", 294), ("Switzerland", 123), ("Long Beach VA", 200),
-                 ("Cleveland", 303), ("Statlog", 270))
+                 ("Statlog", 270), ("Cleveland", 303))
 
 
 def status_counts(table, actions):
@@ -138,36 +142,37 @@ def main(argv=None):
 
     # 5. inferred source composition
     data = pd.read_csv(a.data)
-    data["inferred_source"] = np.concatenate([[n] * k for n, k in SOURCE_BLOCKS])
-    features = data.columns.drop("inferred_source")
+    data["source"] = np.concatenate([[n] * k for n, k in SOURCE_BLOCKS])
+    features = data.columns.drop("source")
     dup = data[features].duplicated(keep="first")
     eligible = (data.chol != 0) & ~dup
     held = []
     for i in range(5):
         held += json.loads((D / f"fold{i}_provenance.json").read_text())["selected_ids"]
     comp = pd.DataFrame({
-        "distributed_records": data.inferred_source.value_counts(),
-        "cholesterol_zero": data[data.chol == 0].inferred_source.value_counts(),
-        "later_exact_duplicates": data[dup].inferred_source.value_counts(),
-        "eligible_746": data[eligible].inferred_source.value_counts(),
-        "target_prevalence_all": data.groupby("inferred_source").target.mean().round(3),
-        "main_recourse_48": data.loc[sorted(main_ids)].inferred_source.value_counts(),
-        "heldout_recourse_312": data.loc[held].inferred_source.value_counts(),
-        "nonoverlap_265": data.loc[sorted(set(held) - main_ids)].inferred_source.value_counts(),
+        "distributed_records": data.source.value_counts(),
+        "cholesterol_zero": data[data.chol == 0].source.value_counts(),
+        "later_exact_duplicates": data[dup].source.value_counts(),
+        "eligible_746": data[eligible].source.value_counts(),
+        "target_prevalence_all": data.groupby("source").target.mean().round(3),
+        "main_recourse_48": data.loc[sorted(main_ids)].source.value_counts(),
+        "heldout_recourse_312": data.loc[held].source.value_counts(),
+        "nonoverlap_265": data.loc[sorted(set(held) - main_ids)].source.value_counts(),
     }).reindex([n for n, _ in SOURCE_BLOCKS]).fillna(0)
-    comp.to_csv(a.output / "inferred_source_composition.csv")
+    comp.to_csv(a.output / "source_composition.csv")
     # where do the originals of the later duplicates sit?
     key = data[features].astype(str).agg("|".join, axis=1)
     first = {k: i for i, k in key.drop_duplicates(keep="first").items()}
     originals = pd.Series([first[key[i]] for i in data.index[dup]])
-    origin = data.loc[originals, "inferred_source"].value_counts()
+    origin = data.loc[originals, "source"].value_counts()
     origin.rename("originals_of_later_duplicates").to_csv(a.output / "duplicate_origin_blocks.csv")
-    # eligible Statlog-block rows: minimum number of differing fields vs any Cleveland-block row
-    cle = data[data.inferred_source == "Cleveland"][features].to_numpy(float)
-    st = data[eligible & (data.inferred_source == "Statlog")][features].to_numpy(float)
-    mins = [int((np.abs(cle - r) > 1e-9).sum(axis=1).min()) for r in st]
-    pd.Series(mins).value_counts().sort_index().rename("statlog_eligible_min_fields_differing_from_cleveland").to_csv(
-        a.output / "statlog_vs_cleveland_near_duplicates.csv")
+    # eligible Cleveland-block rows that are not exact copies of Statlog rows:
+    # minimum number of differing fields vs any Statlog-block row
+    stl = data[data.source == "Statlog"][features].to_numpy(float)
+    cle = data[eligible & (data.source == "Cleveland")][features].to_numpy(float)
+    mins = [int((np.abs(stl - r) > 1e-9).sum(axis=1).min()) for r in cle]
+    pd.Series(mins).value_counts().sort_index().rename("cleveland_eligible_min_fields_differing_from_statlog").to_csv(
+        a.output / "cleveland_vs_statlog_near_duplicates.csv")
     print(comp.to_string())
     print(status.to_string())
     print(pd.DataFrame(hist).to_string())
