@@ -8,11 +8,15 @@ fresh_cf_iterations/
 fresh_cf_iterations_test/
 fresh_cf_iterations_cholonly/
 fresh_cf_iterations_run*/
+fresh_cf_iterations_archive*/
+backups/
 sensitivity_results/
 fresh_cf_pipeline.log
 *_cholonly.log
 test_mode_cholonly.log
 consistency_run*.log
+full_run*.log
+reports/logs/
 counterfactuals/*_counterfactual.csv
 original/
 worked/
@@ -20,7 +24,9 @@ worked/
 # Papers, reviewer comments, and rebuttals
 docs/*.docx
 docs/*.pdf
+docs/manuscripts/
 r3-response/
+revision-r3/
 _paper_extract.txt
 
 # Claude Code
@@ -35,3 +41,4 @@ notebooks/
 
 # Isolated outer-CV experiment (never mixed with published baseline output)
 kfold_runs/
+measurements/

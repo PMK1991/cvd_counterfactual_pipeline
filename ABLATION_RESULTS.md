@@ -1,5 +1,10 @@
 # Ablation Study: SCM-Filtered vs. Unfiltered Counterfactuals
 
+_Refreshed 2026-08-02: re-quoted from the canonical `fresh_cf_iterations/` run (deterministically
+seeded). The previous `fresh_cf_iterations_cholonly/` run is archived as
+`fresh_cf_iterations_archive_published_20260607/`; the two agree to within noise on every quantity
+below (see `PAIRED_ABLATION_BOOTSTRAP.md`)._
+
 **Reviewer 3, Comment 4b** — does the Structural Causal Model (SCM) validation
 layer materially change which counterfactuals (CFs) are accepted, and the
 resulting recourse recommendations?
@@ -42,25 +47,25 @@ class 0 (low risk) for it. Everything upstream is held fixed.
 Reproduce with:
 
 ```bash
-python scripts/run_unfiltered_ablation.py --iterations_dir fresh_cf_iterations_cholonly
-# writes fresh_cf_iterations_cholonly/aggregated_results_no_scm/
+python scripts/run_unfiltered_ablation.py --iterations_dir fresh_cf_iterations
+# writes fresh_cf_iterations/aggregated_results_no_scm/
 ```
 
 ## Headline Result
 
 | Quantity | SCM-filtered | Unfiltered (no SCM) |
 |---|---|---|
-| Accepted CFs / iteration | **82.8** [79.0, 87.5] | **160.1** [148.5, 170.5] |
-| Target-flip / retention rate | **34.8%** [33.1, 36.7] | **67.3%** [62.5, 71.4] |
-| Total accepted CFs (100 iter) | 8,282 | 16,012 |
-| Accepted CFs / patient | 1.73 [1.65, 1.82] | 3.34 [3.09, 3.55] |
+| Accepted CFs / iteration | **82.5** [78.0, 87.0] | **159.5** [148.0, 167.5] |
+| Target-flip / retention rate | **34.7%** [32.7, 36.8] | **67.0%** [62.0, 70.4] |
+| Total accepted CFs (100 iter) | 8,255 | 15,946 |
+| Accepted CFs / patient | 1.72 [1.62, 1.81] | 3.32 [3.08, 3.49] |
 | Mean CFs generated / iteration | 237.9 | 237.9 |
 
 **The SCM filter is ~2× more conservative.** Removing it nearly doubles the
-acceptance rate (34.8% → 67.3%), because direct model scoring accepts *any*
+acceptance rate (34.7% → 67.0%), because direct model scoring accepts *any*
 DiCE proposal the classifier happens to like — including causally implausible
 ones — whereas the SCM only keeps CFs whose propagation flips the outcome
-**under the fitted SCM**. (The 67.3% is a model-only upper bound, not an
+**under the fitted SCM**. (The 67.0% is a model-only upper bound, not an
 independent validation rate — see the design caveat above.)
 
 ## Effect on Recommended Feature Changes
@@ -70,13 +75,13 @@ continuous features:
 
 | Feature | SCM-filtered improve % | No-SCM improve % | Δ mean (SCM) | Δ mean (no-SCM) |
 |---|---|---|---|---|
-| Resting BP (trestbps) | 59.5 [56.4, 62.3] | 61.4 [56.9, 65.9] | −3.31 mmHg | **−11.65 mmHg** |
-| Max heart rate (thalach) | 75.5 [73.4, 77.3] | 95.4 [93.3, 97.5] | +16.29 bpm | **+43.07 bpm** |
-| ST depression (oldpeak) | 71.8 [69.2, 75.2] | 77.7 [74.5, 81.2] | −1.49 | −0.96 |
-| Chest pain (cp) | **87.7** [85.3, 89.2] | 51.5 [46.3, 56.0] | mode 4→3 | mode 4→**4** |
-| ST slope (slope) | **93.8** [92.7, 94.3] | 42.2 [36.9, 48.4] | mode 2→1 | mode 2→1 |
-| Exercise angina (exang) | 63.3 [60.2, 66.5] | 32.5 [26.9, 37.7] | mode 1→0 | mode 1→0 |
-| Resting ECG (restecg) | 38.6 [35.9, 41.8] | 26.3 [21.5, 31.0] | mode 0→0 | mode 0→0 |
+| Resting BP (trestbps) | 59.6 [56.7, 63.0] | 61.6 [56.4, 67.1] | −3.31 mmHg | **−11.63 mmHg** |
+| Max heart rate (thalach) | 75.4 [73.1, 77.6] | 95.4 [93.2, 97.4] | +16.41 bpm | **+43.02 bpm** |
+| ST depression (oldpeak) | 71.6 [69.1, 74.0] | 77.3 [73.7, 80.9] | −1.49 | −0.96 |
+| Chest pain (cp) | **87.8** [85.9, 89.6] | 51.9 [46.8, 57.2] | mode 4→3 | mode 4→**4** |
+| ST slope (slope) | **93.8** [92.5, 94.3] | 42.2 [38.0, 48.2] | mode 2→1 | mode 2→1 |
+| Exercise angina (exang) | 63.1 [60.0, 66.3] | 32.4 [27.4, 37.8] | mode 1→0 | mode 1→0 |
+| Resting ECG (restecg) | 38.2 [35.5, 40.7] | 26.5 [22.1, 31.6] | mode 0→0 | mode 0→0 |
 
 ### Interpretation
 
@@ -86,16 +91,16 @@ consequences of the `chol`/`trestbps` intervention (see the estimand caveat in
 **Design**). With that framing:
 
 1. **The unfiltered arm makes large raw edits to continuous features — including
-   downstream/diagnostic ones.** DiCE freely drops `trestbps` by ~11.7 mmHg and
+   downstream/diagnostic ones.** DiCE freely drops `trestbps` by ~11.6 mmHg and
    raises `thalach` by ~43 bpm to satisfy the classifier — roughly 3.5× and 2.6×
-   the changes the SCM propagates (−3.3 mmHg, +16.3 bpm). Note `thalach` is a
+   the changes the SCM propagates (−3.3 mmHg, +16.4 bpm). Note `thalach` is a
    *downstream symptom* in the causal graph, yet the no-SCM arm moves it the
    most, because it is a cheap, high-leverage feature for the classifier — not
    necessarily a clinically coherent change.
 
 2. **For the categorical disease-severity marker `cp` the pattern reverses: the
    unfiltered arm moves it far less than the SCM-propagated arm.** cp improves
-   87.7% (SCM) vs 51.5% (no-SCM); its mode shifts under SCM (4→3) but stays put
+   87.8% (SCM) vs 51.9% (no-SCM); its mode shifts under SCM (4→3) but stays put
    without it (4→4). Under the SCM these symptoms move *because the fitted model
    propagates the upstream intervention onto them*; the unfiltered model has no
    reason to touch `cp` when a continuous tweak already flips the score. `slope`
@@ -103,9 +108,9 @@ consequences of the `chol`/`trestbps` intervention (see the estimand caveat in
    both arms.
 
 3. **Worsening is higher and more scattered without the SCM on features the SCM
-   never worsens** — restecg 7.1% and slope 3.6% (both 0.0% under SCM) — i.e.
+   never worsens** — restecg 7.6% and slope 3.9% (both 0.0% under SCM) — i.e.
    unconstrained edits that move symptoms the wrong way. (The reverse-looking
-   trestbps figure — worsened 40.3% SCM vs 22.2% no-SCM — is an artifact of the
+   trestbps figure — worsened 40.3% SCM vs 21.8% no-SCM — is an artifact of the
    SCM's smaller, bidirectional propagated changes vs. DiCE's one-directional
    larger drop.)
 
@@ -126,7 +131,8 @@ and accepted-row-composition differences.
 ## Files
 
 - Code: `src/pipeline/unfiltered_scorer.py`, `scripts/run_unfiltered_ablation.py`
-- SCM-filtered results: `fresh_cf_iterations_cholonly/aggregated_results/`
-- Unfiltered results: `fresh_cf_iterations_cholonly/aggregated_results_no_scm/`
+  (or the faster, checkpointed `scripts/run_unfiltered_ablation_fast.py`)
+- SCM-filtered results: `fresh_cf_iterations/aggregated_results/`
+- Unfiltered results: `fresh_cf_iterations/aggregated_results_no_scm/`
   (`all_iteration_metrics.csv`, `ci_results.csv`, `summary_report.md`, and
-  per-iteration `successful_unfiltered/` CSVs)
+  `successful_counterfactuals_unfiltered_all.csv`)

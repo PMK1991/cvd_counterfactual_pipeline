@@ -1,8 +1,52 @@
 # CVD Counterfactual Analysis Pipeline
 
-A reproducible pipeline for generating and validating counterfactual explanations for cardiovascular disease (CVD) risk prediction. The pipeline combines **DiCE-ML** counterfactual generation with **Structural Causal Model (SCM)** validation using **DoWhy**, and computes **95% algorithmic-stability intervals** across 100 independent iterations.
+A reproducible pipeline for generating and auditing simulated counterfactual recourse in cardiovascular disease classification. The pipeline combines **DiCE-ML** proposal generation with an assumed **Structural Causal Model (SCM)** using **DoWhy**. SCM acceptance and propagated-classifier agreement are internal-consistency endpoints, not independent causal validation or evidence of treatment benefit. Repeated generation measures algorithmic stability, not independent patients or clinical risk reduction.
 
 ## Research Context
+
+### Matched-noise intervention-responsiveness audit
+
+The October revision audits the implemented simulation rather than claiming
+personalized treatment recommendations. With the isolated Python 3.11
+environment from `requirements-kfold.txt`, the executed workflow is:
+
+```powershell
+python scripts\run_simulation_diagnostics.py --workers 4 --draws 1000 --replicates 10 --structural main
+python scripts\summarize_simulation_diagnostics.py
+python scripts\report_simulation_diagnostics.py
+python -W ignore -m unittest discover -s tests -p "test_simulation*.py"
+```
+
+Outputs are isolated under
+`measurements\intervention_responsiveness_20261027`; existing model pickles,
+published DiCE runs and the completed five-fold experiment are not overwritten.
+Source, input, model and output checksums accompany the result tables. Use the
+runner's `--help` and a new output directory for a separately configured run.
+
+The audit compares `do(chol=factual)` with an absolute cholesterol grid
+(100-300 mg/dL in 25-unit steps) and relative reductions (0-40% in 10% steps).
+Explicit marginal noise samples are shared across actions within each record
+and replicate; there is **no individual factual-residual abduction**. Scenarios
+can increase cholesterol or fall outside training ranges and are not treatment
+targets. Finite-support integration independently characterizes the fitted
+BP/target mechanisms, not true clinical probabilities.
+
+The full-graph audit covers the original 48 records and each of the 312
+out-of-fold true positives using its own fold artifacts. These cohorts overlap
+in 47 source records and are not independent replications. Fresh full/minimal/
+extended graph sensitivities cover the **main training partition only**;
+outer-fold alternative-graph refits were not run.
+
+Tables distinguish probability changes, threshold crossings, record-level
+plateaus, draw-wise versus aggregate classifier outputs, factual-symptom
+retention, and proposed-BP effects through the historical seed alone. The target
+mechanisms are nondegenerate discrete additive-noise models: about 15% of raw
+target draws require historical binary clipping, **after** descendant generation.
+Consequently symptom-profile equality is conditional on the same **raw target
+and noise**, not simply the same clipped disease label. Record-bootstrap
+intervals condition on the fitted models and do not estimate treatment effects.
+No responsiveness or consistency diagnostic establishes biological validity,
+external generalization or clinical actionability.
 
 ### Frozen-original-model paired adapter measurement
 
@@ -333,15 +377,36 @@ cvd_counterfactual_pipeline/
 │
 ├── sensitivity_results/               # Sensitivity analysis output (gitignored)
 │
-├── docs/                              # Paper drafts, reviewer comments
+├── docs/                              # Pipeline documentation
+│   └── manuscripts/                   # Local documents (gitignored)
+│       ├── legacy/                    # Earlier drafts and reviewer comments
+│       ├── reviewer-r3/               # Previous submissions, figures, archives
+│       ├── revision-r3/
+│       │   ├── current/               # November 7, 2026 manuscript set
+│       │   └── archive/               # Earlier versions grouped by date
+│       └── extracts/                  # Extracted manuscript text
 ├── reports/                           # Standalone analysis reports
+│   ├── RESULTS_MAIN.md                # Canonical-run results
+│   └── logs/                          # Local execution logs (gitignored)
 ├── plots/                             # Visualizations
+├── scripts/                           # Analysis and document utilities
+├── tests/                             # Automated tests
+├── measurements/                      # Local audit outputs (gitignored)
+├── kfold_runs/                        # Local outer-CV outputs (gitignored)
+├── backups/                           # Preserved local backups (gitignored)
 │
 ├── pipeline_config.yaml               # Pipeline configuration
 ├── mtech-env.yml                      # Conda environment (full)
 ├── requirements.txt                   # Pip requirements (minimal)
 └── README.md
 ```
+
+The canonical-run report is in [`reports/RESULTS_MAIN.md`](reports/RESULTS_MAIN.md).
+Historical root-level reports, specifications, the control-flow SVG, and tracked
+documentation retain their paths because earlier audit inventories record them.
+Code, data, model, backup, and experiment paths are unchanged. Manuscript
+filenames and contents are preserved; `current` groups the November 7 file set,
+not a claim that those files are final or approved for submission.
 
 ## Reproducing Results
 
