@@ -377,15 +377,36 @@ cvd_counterfactual_pipeline/
 │
 ├── sensitivity_results/               # Sensitivity analysis output (gitignored)
 │
-├── docs/                              # Paper drafts, reviewer comments
+├── docs/                              # Pipeline documentation
+│   └── manuscripts/                   # Local documents (gitignored)
+│       ├── legacy/                    # Earlier drafts and reviewer comments
+│       ├── reviewer-r3/               # Previous submissions, figures, archives
+│       ├── revision-r3/
+│       │   ├── current/               # November 7, 2026 manuscript set
+│       │   └── archive/               # Earlier versions grouped by date
+│       └── extracts/                  # Extracted manuscript text
 ├── reports/                           # Standalone analysis reports
+│   ├── RESULTS_MAIN.md                # Canonical-run results
+│   └── logs/                          # Local execution logs (gitignored)
 ├── plots/                             # Visualizations
+├── scripts/                           # Analysis and document utilities
+├── tests/                             # Automated tests
+├── measurements/                      # Local audit outputs (gitignored)
+├── kfold_runs/                        # Local outer-CV outputs (gitignored)
+├── backups/                           # Preserved local backups (gitignored)
 │
 ├── pipeline_config.yaml               # Pipeline configuration
 ├── mtech-env.yml                      # Conda environment (full)
 ├── requirements.txt                   # Pip requirements (minimal)
 └── README.md
 ```
+
+The canonical-run report is in [`reports/RESULTS_MAIN.md`](reports/RESULTS_MAIN.md).
+Historical root-level reports, specifications, the control-flow SVG, and tracked
+documentation retain their paths because earlier audit inventories record them.
+Code, data, model, backup, and experiment paths are unchanged. Manuscript
+filenames and contents are preserved; `current` groups the November 7 file set,
+not a claim that those files are final or approved for submission.
 
 ## Reproducing Results
 

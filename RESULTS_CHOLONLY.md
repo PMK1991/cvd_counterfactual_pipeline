@@ -1,3 +1,12 @@
+**Superseded 2026-08-02 — see [`reports/RESULTS_MAIN.md`](reports/RESULTS_MAIN.md).** This file quotes the old
+`fresh_cf_iterations_cholonly/` run, now archived as
+`fresh_cf_iterations_archive_published_20260607/`. `fresh_cf_iterations/` (deterministically
+seeded) is the canonical run going forward; `reports/RESULTS_MAIN.md` has the same content re-quoted from
+it (numbers agree to within noise — see `PAIRED_ABLATION_BOOTSTRAP.md`). Kept here unmodified for
+historical reference only.
+
+---
+
 # Results — Cholesterol-Only Recourse (do(chol)), Unified Run
 
 All numbers below come from a **single, internally consistent 100-iteration run**
